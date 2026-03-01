@@ -1,0 +1,39 @@
+# Credentials & secrets
+service_account.json
+*.json.key
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Playwright
+playwright-report/
+
+# Streamlit
+.streamlit/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Dane wejściowe (pliki pobierane z Drive)
+backend/data/*
+!backend/data/.gitkeep
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
