@@ -72,9 +72,62 @@ python install.py
 
 Skrypt automatycznie:
 1. instaluje `uv` (jeśli brak)
-2. instaluje wszystkie zależności Python (`uv sync`)
+2. instaluje zależności Python (`uv sync`)
 3. pobiera przeglądarkę Chromium dla Playwright
 4. pobiera modele HuggingFace: `BAAI/bge-m3` (~570 MB) i `BAAI/bge-reranker-v2-m3` (~1.1 GB)
+
+### Obsługa plików `.pst` (parse-email)
+
+Biblioteka `libpff` wymagana przez `parse-email` **nie ma gotowych kół dla Windows** — na wszystkich platformach trzeba ją instalować osobno flagą `--with-pst`:
+
+```bash
+# macOS / Linux
+python install.py --with-pst
+
+# Windows (patrz: wymagania wstępne poniżej)
+python install.py --with-pst
+```
+
+Bez flagi `--with-pst` polecenie `parse-email` nie będzie dostępne, pozostałe (`scrape`, `vectorize`, `search`, `dashboard`) działają normalnie.
+
+#### Wymagania wstępne na Windows (przed `--with-pst`)
+
+`libpff` musi być skompilowane ze źródeł, co wymaga zainstalowania dwóch narzędzi:
+
+**1. Visual C++ Build Tools**
+
+Pobierz i zainstaluj **Build Tools for Visual Studio**:
+https://visualstudio.microsoft.com/visual-cpp-build-tools/
+
+W instalatorze zaznacz pakiet robocza: **„Programowanie aplikacji klasycznych w języku C++"** (Desktop development with C++). Zawiera on kompilator MSVC oraz Windows SDK.
+
+**2. CMake**
+
+Pobierz instalator `.msi` ze strony: https://cmake.org/download/
+
+Podczas instalacji zaznacz opcję **„Add CMake to the system PATH"**.
+
+**3. Weryfikacja przed uruchomieniem instalatora**
+
+Otwórz nowy terminal (po zainstalowaniu powyższych) i sprawdź:
+```cmd
+cmake --version
+cl
+```
+Oba polecenia powinny zwrócić wersję / informacje o kompilatorze. Jeśli `cl` nie jest rozpoznane, uruchom terminal przez **„Developer Command Prompt for VS"** ze Start Menu.
+
+> [!TIP]
+> Na Windows zalecane jest użycie **WSL2** — prościej i bez ryzyka błędów kompilacji:
+> ```bash
+> # W WSL2 (Ubuntu/Debian)
+> python install.py --with-pst   # działa bez dodatkowych narzędzi
+> ```
+
+> [!NOTE]
+> Flaga `--help` wyświetla wszystkie dostępne opcje instalatora:
+> ```bash
+> python install.py --help
+> ```
 
 ---
 

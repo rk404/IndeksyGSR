@@ -7,7 +7,6 @@ dependencies = [
     "google-api-python-client==2.190.0",
     "google-auth-httplib2==0.3.0",
     "google-auth-oauthlib==1.2.4",
-    "libpff-python-ratom==20220304",
     "pandas==2.3.3",
     "google-cloud-firestore==2.23.0",
     "google-cloud-storage==3.9.0",
@@ -20,6 +19,9 @@ dependencies = [
     "spacy==3.8.11",
     "pl-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl",
 ]
+
+[project.optional-dependencies]
+pst = ["libpff-python-ratom==20220304"]
 
 [project.scripts]
 scrape      = "app.pipeline.scrape:main"

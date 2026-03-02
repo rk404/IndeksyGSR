@@ -1,8 +1,12 @@
 """
 Skrypt instalacyjny projektu – działa na Windows, macOS i Linux.
-Uruchomienie: python install.py
+
+Użycie:
+    python install.py                # standardowa instalacja
+    python install.py --with-pst     # + obsługa plików .pst (parse-email)
 """
 
+import argparse
 import os
 import platform
 import shutil
@@ -59,6 +63,26 @@ def install_uv() -> None:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Instalator projektu IndeksyGSR",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Przykłady:\n"
+            "  python install.py              # standardowa instalacja\n"
+            "  python install.py --with-pst   # + obsługa plików .pst (parse-email)\n"
+        ),
+    )
+    ap.add_argument(
+        "--with-pst",
+        action="store_true",
+        help=(
+            "Zainstaluj obsługę plików .pst (libpff). "
+            "Na Windows wymaga Visual C++ Build Tools i CMake."
+        ),
+    )
+    args = ap.parse_args()
+
+    system = platform.system()
     print("=== Instalacja zależności projektu ===")
 
     # 1. uv
@@ -70,7 +94,27 @@ def main() -> None:
 
     # 2. Pakiety Python (backend)
     print("\n--- Instalacja pakietów Python (uv sync) ---")
-    run(["uv", "sync"], cwd=ROOT_DIR)
+    sync_cmd = ["uv", "sync"]
+
+    if args.with_pst:
+        if system == "Windows":
+            print(
+                "\n  [UWAGA] Instalacja libpff na Windows wymaga:\n"
+                "    • Visual C++ Build Tools\n"
+                "      https://visualstudio.microsoft.com/visual-cpp-build-tools/\n"
+                "    • CMake (https://cmake.org/download/)\n"
+                "  Jeśli instalacja się nie powiedzie, użyj WSL2.\n"
+            )
+        sync_cmd += ["--extra", "pst"]
+    elif system == "Windows":
+        print(
+            "\n  [INFO] Pominięto obsługę plików .pst (libpff) — brak natywnych\n"
+            "  kół dla Windows. Polecenie parse-email nie będzie dostępne.\n"
+            "  Aby zainstalować, uruchom ponownie z flagą --with-pst\n"
+            "  (wymaga Visual C++ Build Tools + CMake) lub użyj WSL2.\n"
+        )
+
+    run(sync_cmd, cwd=ROOT_DIR)
 
     # 2a. macOS: Python 3.13 pomija .pth pliki z flagą UF_HIDDEN (uv ustawia ją na .venv)
     if platform.system() == "Darwin":
