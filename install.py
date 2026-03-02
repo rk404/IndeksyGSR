@@ -1,6 +1,6 @@
 """
 Skrypt instalacyjny projektu – działa na Windows, macOS i Linux.
-Uruchomienie: python setup.py
+Uruchomienie: python install.py
 """
 
 import os
@@ -12,7 +12,8 @@ import urllib.request
 from pathlib import Path
 
 
-BACKEND_DIR = Path(__file__).parent / "backend"
+ROOT_DIR = Path(__file__).parent
+BACKEND_DIR = ROOT_DIR / "backend"
 
 
 def run(cmd: list[str], **kwargs) -> None:
@@ -69,7 +70,14 @@ def main() -> None:
 
     # 2. Pakiety Python (backend)
     print("\n--- Instalacja pakietów Python (uv sync) ---")
-    run(["uv", "sync"], cwd=BACKEND_DIR)
+    run(["uv", "sync"], cwd=ROOT_DIR)
+
+    # 2a. macOS: Python 3.13 pomija .pth pliki z flagą UF_HIDDEN (uv ustawia ją na .venv)
+    if platform.system() == "Darwin":
+        print("\n--- macOS: usuwanie flagi UF_HIDDEN z site-packages ---")
+        venv_site = ROOT_DIR / ".venv" / "lib"
+        if venv_site.exists():
+            run(["chflags", "-R", "nohidden", str(venv_site)])
 
     # 3. Playwright – przeglądarka Chromium
     print("\n--- Instalacja przeglądarki Playwright: Chromium ---")

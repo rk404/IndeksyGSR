@@ -28,49 +28,70 @@ Firestore           Cloud      Firestore         Cloud         Qdrant       BGE-
 
 ---
 
-## Pliki projektu
+## Struktura projektu
 
-| Plik | Opis |
-|---|---|
-| `gdrive.py` | Klient Google Drive (Service Account) |
-| `parse_email.py` | Parser `.pst` → Firestore + GCS |
-| `scrape.py` | Web scraper produktów z CSV → Firestore |
-| `extractors.py` | Ekstraktory per domena (Allegro, TME, Generic) |
-| `vectorize.py` | Wektoryzacja ~69k indeksów (BGE-M3) → Qdrant Cloud |
-| `search.py` | Wyszukiwanie semantyczne (hybrid dense+sparse, RRF) |
-| `dashboard.py` | Streamlit dashboard (maile + produkty + wyszukiwanie) |
-| `requirements.txt` | Zależności Python |
-| `service_account.json` | **Klucz GCP — nie commitować!** |
-| `.env` | **Klucze Qdrant — nie commitować!** |
+```
+IndeksyGSR/
+├── pyproject.toml          # definicja pakietu + zależności
+├── uv.lock                 # lock file (uv)
+├── install.py              # skrypt instalacyjny (jednorazowy)
+├── .python-version         # Python 3.13.12
+├── .flake8                 # konfiguracja lintera
+├── .venv/                  # środowisko wirtualne
+├── backend/
+│   ├── app/
+│   │   ├── core/
+│   │   │   ├── search.py       # wyszukiwanie semantyczne (hybrid RRF)
+│   │   │   └── extractors.py   # parsery DOM per domena
+│   │   ├── pipeline/
+│   │   │   ├── parse_email.py  # parser .pst → Firestore + GCS
+│   │   │   ├── scrape.py       # web scraper → Firestore
+│   │   │   └── vectorize.py    # BGE-M3 → Qdrant Cloud
+│   │   ├── services/
+│   │   │   ├── firestore.py    # klient Firestore
+│   │   │   ├── gcs.py          # klient Cloud Storage
+│   │   │   ├── gdrive.py       # klient Google Drive
+│   │   │   └── qdrant.py       # klient Qdrant Cloud
+│   │   ├── dashboard.py        # Streamlit UI
+│   │   └── main.py             # FastAPI (placeholder)
+│   ├── data/                   # pliki CSV i PST (pobierane z Drive, nie w repo)
+│   ├── .env                    # klucze Qdrant — nie commitować!
+│   └── service_account.json    # klucz GCP — nie commitować!
+├── frontend/                   # placeholder
+└── docs/
+    └── implementation_plan_wektoryzacja.md
+```
 
 ---
 
 ## Wymagania i instalacja
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install "transformers<5.0"   # wymagane przez FlagEmbedding
-playwright install chromium      # tylko dla scrape.py
+python install.py
 ```
+
+Skrypt automatycznie:
+1. instaluje `uv` (jeśli brak)
+2. instaluje wszystkie zależności Python (`uv sync`)
+3. pobiera przeglądarkę Chromium dla Playwright
+4. pobiera modele HuggingFace: `BAAI/bge-m3` (~570 MB) i `BAAI/bge-reranker-v2-m3` (~1.1 GB)
 
 ---
 
 ## Konfiguracja GCP (jednorazowa)
 
-1. **Service Account** → pobierz klucz JSON → `service_account.json`
+1. **Service Account** → pobierz klucz JSON → `backend/service_account.json`
    - Role: `Cloud Datastore User`, `Storage Object Admin`, `Storage Legacy Bucket Reader`
 2. **Firestore**: tryb Native, `europe-central2`
 3. **Cloud Storage**: bucket `projekt-email-attachments`, `europe-central2`
 4. **Google Drive**: folder udostępniony e-mailowi Service Account (rola Edytor)
 
 > [!IMPORTANT]
-> Plik `service_account.json` nie jest w repozytorium — otrzymasz go od właściciela projektu i umieść w głównym folderze projektu.
+> Plik `backend/service_account.json` nie jest w repozytorium — otrzymasz go od właściciela projektu.
 
 ## Konfiguracja Qdrant (jednorazowa)
 
-Utwórz plik `.env` w głównym katalogu projektu:
+Utwórz plik `backend/.env`:
 
 ```
 QDRANT_URL=https://<twoj-klaster>.qdrant.io
@@ -78,27 +99,79 @@ QDRANT_API_KEY=<twoj-klucz>
 ```
 
 > [!IMPORTANT]
-> Plik `.env` nie jest w repozytorium — otrzymasz go od właściciela projektu.
+> Plik `backend/.env` nie jest w repozytorium — otrzymasz go od właściciela projektu.
+
+---
+
+## Komendy CLI
+
+Wszystkie komendy dostępne po instalacji bezpośrednio z terminala (wymagają aktywnego `.venv`):
+
+```bash
+source .venv/bin/activate
+```
+
+lub przez `uv run`:
+
+```bash
+uv run <komenda>
+```
+
+### parse-email
+
+```bash
+parse-email                            # pobierz .pst z Drive i importuj
+parse-email --local plik.pst           # użyj lokalnego pliku
+parse-email --no-attachments           # pomiń upload PDF do GCS
+parse-email --dry-run                  # parsuj bez zapisu
+parse-email --reset                    # wyczyść dane tego PST i reimportuj
+parse-email --purge                    # wyczyść WSZYSTKIE dane
+
+# Obsługa cytowanej korespondencji w wątku
+parse-email --thread-mode keep         # domyślnie: wątek w polu signature
+parse-email --thread-mode strip        # usuń cytowaną historię
+parse-email --thread-mode split        # wątek jako thread_messages[]
+```
+
+### scrape
+
+```bash
+scrape                                 # scrape wszystkich
+scrape --sample 100                    # 100 losowych wierszy (test)
+scrape --limit 500                     # pierwsze N wierszy
+scrape --domain allegro.pl             # tylko wybrana domena
+scrape --resume                        # pomiń już zescrapowane
+scrape --dry-run                       # bez zapisu do Firestore
+scrape --concurrency 5                 # liczba równoległych kart (domyślnie 5)
+```
+
+### vectorize
+
+```bash
+vectorize                              # wszystkie indeksy (~69k)
+vectorize --limit 100                  # test na 100 indeksach
+vectorize --recreate                   # usuń kolekcję i utwórz od nowa
+vectorize --batch-size 32             # rozmiar batcha encodingu (domyślnie 32)
+vectorize --skip-scraping              # nie wczytuj danych z Firestore
+```
+
+### search
+
+```bash
+search "śruby M20 ocynkowane ogniowo"
+search "kołnierz DN65 stal" --top-k 5
+```
+
+### dashboard
+
+```bash
+dashboard
+# → http://localhost:8501
+```
 
 ---
 
 ## Moduł: `parse_email.py`
-
-### CLI
-
-```bash
-python parse_email.py                      # pobierz .pst z Drive i importuj
-python parse_email.py --local plik.pst     # użyj lokalnego pliku
-python parse_email.py --no-attachments     # pomiń upload PDF do GCS
-python parse_email.py --dry-run            # parsuj bez zapisu
-python parse_email.py --reset              # wyczyść dane tego PST i reimportuj
-python parse_email.py --purge              # wyczyść WSZYSTKIE dane
-
-# Obsługa cytowanej korespondencji w wątku
-python parse_email.py --thread-mode keep   # domyślnie: wątek w polu signature
-python parse_email.py --thread-mode strip  # usuń cytowaną historię
-python parse_email.py --thread-mode split  # wątek jako thread_messages[]
-```
 
 ### Pola Firestore (`emails`)
 
@@ -127,18 +200,6 @@ Jednorazowy web scraper pobierający opisy i specyfikacje produktów z URL-i w p
 **Dane wejściowe:** 8 064 wierszy CSV (kolumny: `INDEKS`, `NAZWA`, `LINK`, `KOMB_ID`, `JDMR_NAZWA`)
 **Dominująca domena:** allegro.pl (1 308 linków), tme.eu (295), tim.pl (97)
 **Technologia:** async Playwright (Chromium headless)
-
-### CLI
-
-```bash
-python scrape.py                       # scrape wszystkich
-python scrape.py --sample 100          # 100 losowych wierszy (test)
-python scrape.py --limit 500           # pierwsze N wierszy
-python scrape.py --domain allegro.pl   # tylko wybrana domena
-python scrape.py --resume              # pomiń już zescrapowane
-python scrape.py --dry-run             # bez zapisu do Firestore
-python scrape.py --concurrency 5       # liczba równoległych kart (domyślnie 5)
-```
 
 ### Pola Firestore (`product_scrapes`, klucz = `INDEKS`)
 
@@ -239,16 +300,6 @@ hidden states [seq_len × 1024]
 > [!NOTE]
 > `batch_size=32` oznacza że transformer przetwarza 32 teksty równolegle w jednym forward pass — tensor `[32, seq_len, 1024]`. Większy batch = szybciej, ale więcej RAM.
 
-### CLI
-
-```bash
-python vectorize.py                    # wszystkie indeksy (~69k)
-python vectorize.py --limit 100        # test na 100 indeksach
-python vectorize.py --recreate         # usuń kolekcję i utwórz od nowa
-python vectorize.py --batch-size 32    # rozmiar batcha encodingu (domyślnie 32)
-python vectorize.py --skip-scraping    # nie wczytuj danych z Firestore
-```
-
 ### Payload punktu w Qdrant
 
 | Pole | Opis |
@@ -267,16 +318,9 @@ Wyszukiwanie semantyczne w kolekcji Qdrant — hybrid search (dense + sparse) z 
 ### Użycie jako moduł
 
 ```python
-from search import search
+from app.core.search import search
 results = search("śruby M20 ocynkowane ogniowo", top_k=10)
 # → [{indeks, nazwa, komb_id, jdmr_nazwa, score}, ...]
-```
-
-### CLI
-
-```bash
-python search.py "śruby M20 ocynkowane ogniowo"
-python search.py "kołnierz DN65 stal" --top-k 5
 ```
 
 ---
@@ -284,8 +328,7 @@ python search.py "kołnierz DN65 stal" --top-k 5
 ## Dashboard (Streamlit)
 
 ```bash
-source .venv/bin/activate
-streamlit run dashboard.py
+dashboard
 # → http://localhost:8501
 ```
 
