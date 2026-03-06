@@ -1155,7 +1155,6 @@ dependencies = [
     { name = "google-auth-oauthlib" },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-storage" },
-    { name = "httpx" },
     { name = "pandas" },
     { name = "pl-core-news-lg" },
     { name = "playwright" },
@@ -1164,7 +1163,6 @@ dependencies = [
     { name = "spacy" },
     { name = "streamlit" },
     { name = "transformers" },
-    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
@@ -1181,7 +1179,6 @@ requires-dist = [
     { name = "google-auth-oauthlib", specifier = "==1.2.4" },
     { name = "google-cloud-firestore", specifier = "==2.23.0" },
     { name = "google-cloud-storage", specifier = "==3.9.0" },
-    { name = "httpx", specifier = ">=0.27" },
     { name = "libpff-python-ratom", marker = "extra == 'pst'", specifier = "==20220304" },
     { name = "pandas", specifier = "==2.3.3" },
     { name = "pl-core-news-lg", url = "https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl" },
@@ -1193,6 +1190,7 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.40,<5.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
+provides-extras = ["pst"]
 provides-extras = ["pst"]
 
 [[package]]
