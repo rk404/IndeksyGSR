@@ -1116,7 +1116,6 @@ dependencies = [
     { name = "google-auth-oauthlib" },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-storage" },
-    { name = "libpff-python-ratom" },
     { name = "pandas" },
     { name = "pl-core-news-lg" },
     { name = "playwright" },
@@ -1127,6 +1126,11 @@ dependencies = [
     { name = "transformers" },
 ]
 
+[package.optional-dependencies]
+pst = [
+    { name = "libpff-python-ratom" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "flagembedding", specifier = "==1.3.5" },
@@ -1135,7 +1139,7 @@ requires-dist = [
     { name = "google-auth-oauthlib", specifier = "==1.2.4" },
     { name = "google-cloud-firestore", specifier = "==2.23.0" },
     { name = "google-cloud-storage", specifier = "==3.9.0" },
-    { name = "libpff-python-ratom", specifier = "==20220304" },
+    { name = "libpff-python-ratom", marker = "extra == 'pst'", specifier = "==20220304" },
     { name = "pandas", specifier = "==2.3.3" },
     { name = "pl-core-news-lg", url = "https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl" },
     { name = "playwright", specifier = "==1.58.0" },
@@ -1145,6 +1149,7 @@ requires-dist = [
     { name = "streamlit", specifier = "==1.54.0" },
     { name = "transformers", specifier = ">=4.40,<5.0" },
 ]
+provides-extras = ["pst"]
 
 [[package]]
 name = "inscriptis"
