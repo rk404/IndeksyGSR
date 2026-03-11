@@ -154,6 +154,50 @@ async def _best_description(page) -> str:
 async def extract_allegro(page) -> dict:
     result: dict = {}
 
+
+
+
+
+    #Refresh page and submit button and move slider right
+    html = await page.content()
+    if "DataDome CAPTCHA" in html or "DataDome Device Check" in html or "You have been blocked" in html:
+        print("Blocked by captcha")
+        await page.reload()
+        html = await page.content()
+
+        await page.wait_for_selector("iframe[src*='captcha-delivery']")
+        iframe = await page.wait_for_selector("iframe[src*='captcha-delivery']")
+        frame = await iframe.content_frame()
+        btn = frame.locator(".captcha_display_button_submit")
+
+        await btn.wait_for()
+        await btn.scroll_into_view_if_needed()
+        await btn.click()
+
+        slider = frame.locator(".slider")
+        track = frame.locator(".sliderContainer")
+
+        slider_box = await slider.bounding_box()
+        track_box = await track.bounding_box()
+
+        start_x = slider_box["x"] + slider_box["width"] / 2
+        start_y = slider_box["y"] + slider_box["height"] / 2
+
+        end_x = track_box["x"] + track_box["width"] - 5
+
+        await page.mouse.move(start_x, start_y)
+        await page.mouse.down()
+        await page.mouse.move(end_x, start_y, steps=40)
+        await page.mouse.up()
+
+
+
+
+
+
+
+
+    await page.wait_for_selector("h1")
     # Tytuł
     result["title"] = await _text(page, "h1") or await page.title()
 

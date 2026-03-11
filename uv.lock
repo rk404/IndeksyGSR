@@ -1116,15 +1116,20 @@ dependencies = [
     { name = "google-auth-oauthlib" },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-storage" },
-    { name = "libpff-python-ratom" },
     { name = "pandas" },
     { name = "pl-core-news-lg" },
     { name = "playwright" },
+    { name = "playwright-stealth" },
     { name = "python-dotenv" },
     { name = "qdrant-client" },
     { name = "spacy" },
     { name = "streamlit" },
     { name = "transformers" },
+]
+
+[package.optional-dependencies]
+pst = [
+    { name = "libpff-python-ratom" },
 ]
 
 [package.metadata]
@@ -1135,16 +1140,18 @@ requires-dist = [
     { name = "google-auth-oauthlib", specifier = "==1.2.4" },
     { name = "google-cloud-firestore", specifier = "==2.23.0" },
     { name = "google-cloud-storage", specifier = "==3.9.0" },
-    { name = "libpff-python-ratom", specifier = "==20220304" },
+    { name = "libpff-python-ratom", marker = "extra == 'pst'", specifier = "==20220304" },
     { name = "pandas", specifier = "==2.3.3" },
     { name = "pl-core-news-lg", url = "https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl" },
     { name = "playwright", specifier = "==1.58.0" },
+    { name = "playwright-stealth", specifier = ">=2.0.2" },
     { name = "python-dotenv", specifier = "==1.2.1" },
     { name = "qdrant-client", specifier = "==1.17.0" },
     { name = "spacy", specifier = "==3.8.11" },
     { name = "streamlit", specifier = "==1.54.0" },
     { name = "transformers", specifier = ">=4.40,<5.0" },
 ]
+provides-extras = ["pst"]
 
 [[package]]
 name = "inscriptis"
@@ -1917,6 +1924,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/4b/236e60ab9f6d62ed0fd32150d61f1f494cefbf02304c0061e78ed80c1c32/playwright-1.58.0-py3-none-win32.whl", hash = "sha256:1e03be090e75a0fabbdaeab65ce17c308c425d879fa48bb1d7986f96bfad0b99", size = 36815998, upload-time = "2026-01-30T15:09:39.627Z" },
     { url = "https://files.pythonhosted.org/packages/41/f8/5ec599c5e59d2f2f336a05b4f318e733077cd5044f24adb6f86900c3e6a7/playwright-1.58.0-py3-none-win_amd64.whl", hash = "sha256:a2bf639d0ce33b3ba38de777e08697b0d8f3dc07ab6802e4ac53fb65e3907af8", size = 36816005, upload-time = "2026-01-30T15:09:42.449Z" },
     { url = "https://files.pythonhosted.org/packages/c8/c4/cc0229fea55c87d6c9c67fe44a21e2cd28d1d558a5478ed4d617e9fb0c93/playwright-1.58.0-py3-none-win_arm64.whl", hash = "sha256:32ffe5c303901a13a0ecab91d1c3f74baf73b84f4bedbb6b935f5bc11cc98e1b", size = 33085919, upload-time = "2026-01-30T15:09:45.71Z" },
+]
+
+[[package]]
+name = "playwright-stealth"
+version = "2.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "playwright" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/61/ee/871901103c7b2a12070011fd4d978191f8f962837bf8bb51847274f528fa/playwright_stealth-2.0.2.tar.gz", hash = "sha256:ac57e51873190da5e653e03720e948c8f0a3d06b098f1d56763103d23ee48143", size = 24902, upload-time = "2026-02-13T02:36:25.137Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/30/f95f087f4b071611a7f63a2a0c9af4df3ac046dae2a693bfdacd70512867/playwright_stealth-2.0.2-py3-none-any.whl", hash = "sha256:37a5733f481b9c0ad602cf71491aa5a7c96c2a2fe4fa1e7ab764d2cd35520f2f", size = 33209, upload-time = "2026-02-13T02:36:26.334Z" },
 ]
 
 [[package]]
