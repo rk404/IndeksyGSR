@@ -499,6 +499,14 @@ def _get_qdrant():
         return None
 
 
+def _toggle_search_selection(item_id: str, key: str) -> None:
+    """Callback aktualizujący zestaw zaznaczonych wyników przy zmianie checkboxa."""
+    if st.session_state[key]:
+        st.session_state["search_selections"].add(item_id)
+    else:
+        st.session_state["search_selections"].discard(item_id)
+
+
 def view_search():
     st.markdown("## 🔍 Wyszukiwanie semantyczne indeksów")
 
@@ -512,6 +520,10 @@ def view_search():
         with st.spinner("Ładowanie modelu BGE-M3 (pierwsze uruchomienie, ~30s)..."):
             get_search_model()
         st.session_state["search_model_ready"] = True
+
+    # Inicjalizacja stanu zaznaczenia
+    if "search_selections" not in st.session_state:
+        st.session_state["search_selections"] = set()
 
     col1, col2, col3 = st.columns([5, 1, 2])
     with col1:
@@ -541,24 +553,101 @@ def view_search():
         st.warning("Brak wyników. Sprawdź czy kolekcja Qdrant jest zwektoryzowana (`python vectorize.py`).")
         return
 
-    st.markdown(f"**{len(results)} wyników** dla: *{html_module.escape(query)}*")
+    # Nagłówek wyników z licznikiem zaznaczonych
+    header_col1, header_col2 = st.columns([7, 3])
+    with header_col1:
+        st.markdown(f"**{len(results)} wyników** dla: *{html_module.escape(query)}*")
+    with header_col2:
+        num_selected = len(st.session_state["search_selections"])
+        if num_selected > 0:
+            st.markdown(
+                f'<div style="text-align:right;color:#4cc9f0;font-weight:600">✓ {num_selected} zaznaczonych</div>',
+                unsafe_allow_html=True,
+            )
     st.markdown("---")
 
+    # CSS dla zaznaczonych wierszy
+    st.markdown(
+        """
+        <style>
+        .search-result-selected {
+            border-left: 4px solid #4cc9f0;
+            background-color: #1a2744;
+            padding-left: 8px;
+            border-radius: 4px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     for i, r in enumerate(results, 1):
+        item_id = r["indeks"]
+        is_selected = item_id in st.session_state["search_selections"]
         score_pct = min(int(r["score"] * 100), 100)
-        c1, c2 = st.columns([9, 2])
-        with c1:
+
+        row_style = "search-result-selected" if is_selected else ""
+        c_check, c_info, c_score = st.columns([0.8, 8.2, 2])
+
+        with c_check:
+            cb_key = f"sel_{item_id}"
+            st.checkbox(
+                label="",
+                value=is_selected,
+                key=cb_key,
+                label_visibility="collapsed",
+                on_change=_toggle_search_selection,
+                args=(item_id, cb_key),
+            )
+
+        with c_info:
             st.markdown(
+                f'<div class="{row_style}">'
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
                 f'<span style="font-weight:600">{html_module.escape(r["nazwa"])}</span>'
                 f'<div style="color:#8b949e;font-size:.8rem;margin-top:2px">'
                 f'<code>{html_module.escape(r["indeks"])}</code>'
-                f' · {html_module.escape(r["jdmr_nazwa"])}</div>',
+                f' · {html_module.escape(r["jdmr_nazwa"])}</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
-        with c2:
+
+        with c_score:
             st.progress(score_pct, text=f"score: {r['score']}")
+
         st.divider()
+
+    # Przyciski akcji – widoczne tylko gdy coś zaznaczono
+    if st.session_state["search_selections"]:
+        st.markdown("---")
+        results_by_id = {r["indeks"]: r for r in results}
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+        with btn_col1:
+            if st.button("🔍 Wyświetl szczegóły", use_container_width=True):
+                selected_ids = sorted(st.session_state["search_selections"])
+                st.markdown("**Zaznaczone indeksy:**")
+                for idx in selected_ids:
+                    matched = results_by_id.get(idx)
+                    if matched:
+                        st.markdown(
+                            f'- `{html_module.escape(matched["indeks"])}` – '
+                            f'{html_module.escape(matched["nazwa"])}'
+                        )
+                    else:
+                        st.markdown(f"- `{html_module.escape(idx)}`")
+
+        with btn_col2:
+            if st.button("📋 Skopiuj do schowka", use_container_width=True):
+                selected_ids = sorted(st.session_state["search_selections"])
+                clipboard_text = "\n".join(selected_ids)
+                st.code(clipboard_text, language=None)
+                st.info("Skopiuj powyższy tekst do schowka (Ctrl+A, Ctrl+C).")
+
+        with btn_col3:
+            if st.button("✖ Wyczyść zaznaczenia", use_container_width=True):
+                st.session_state["search_selections"] = set()
+                st.rerun()
 
 
 # ──────────────────────────────────────────────
