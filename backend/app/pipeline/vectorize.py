@@ -28,6 +28,7 @@ from qdrant_client import QdrantClient, models
 from app.services.gdrive import GoogleDriveClient
 from app.services.firestore import get_client as get_db
 from app.services.qdrant import get_client as get_qdrant
+from app.services.embedding_client import EmbeddingModel
 
 # ──────────────────────────────────────────────
 # Konfiguracja
@@ -42,7 +43,7 @@ COLLECTION_NAME = "indeksy"
 DENSE_SIZE = 1024
 PRODUCTS_COLLECTION = "product_scrapes"
 DEFAULT_BATCH_SIZE = 32
-QDRANT_UPLOAD_BATCH = 100
+QDRANT_UPLOAD_BATCH = 50
 
 logging.basicConfig(
     level=logging.INFO,
@@ -86,16 +87,24 @@ def load_slownik() -> pd.DataFrame:
 # ──────────────────────────────────────────────
 
 def build_segment_map(slownik_df: pd.DataFrame) -> dict[int, dict[int, str]]:
-    """komb_id → {pozycja: opis_wartosc} — tylko pozycje 1-3 z opisem."""
+    """komb_id → {pozycja: wartosc} — poz. 1-3: OPIS_WARTOSC, poz. 4-6: KOD_WARTOSC."""
+    # Obsługa obu wariantów nazwy kolumny (KOD_WARTOSC lub KOD_WAROSC)
+    kod_col = "KOD_WARTOSC" if "KOD_WARTOSC" in slownik_df.columns else "KOD_WAROSC"
+
     result: dict[int, dict[int, str]] = {}
-    for _, row in slownik_df[slownik_df["OPIS_WARTOSC"].notna()].iterrows():
+    for _, row in slownik_df.iterrows():
         pos = int(row["POZYCJA"])
-        if pos > 3:
-            continue
         komb_id = int(row["KOMB_ID"])
         if komb_id not in result:
             result[komb_id] = {}
-        result[komb_id][pos] = str(row["OPIS_WARTOSC"]).strip()
+        if pos <= 3:
+            val = row.get("OPIS_WARTOSC")
+            if pd.notna(val):
+                result[komb_id][pos] = str(val).strip()
+        else:
+            val = row.get(kod_col)
+            if pd.notna(val):
+                result[komb_id][pos] = str(val).strip()
     return result
 
 
@@ -196,10 +205,13 @@ def upload_batch(
     rows_batch: list[pd.Series],
     dense_vecs: list,
     lexical_weights: list,
+    segment_map: dict[int, dict[int, str]],
 ) -> None:
     points = []
     for i, (row, dense, lex) in enumerate(zip(rows_batch, dense_vecs, lexical_weights)):
         indeks = str(row.get("INDEKS", "")).strip()
+        komb_id_raw = row.get("KOMB_ID")
+        seg = segment_map.get(int(komb_id_raw), {}) if pd.notna(komb_id_raw) else {}
         points.append(
             models.PointStruct(
                 id=id_offset + i,
@@ -213,6 +225,12 @@ def upload_batch(
                     "komb_id": str(row.get("KOMB_ID", "")),
                     "jdmr_nazwa": str(row.get("JDMR_NAZWA", "")),
                     "link": "",  # baza nie ma linków — uzupełniane przez scraper
+                    "seg1": seg.get(1, ""),
+                    "seg2": seg.get(2, ""),
+                    "seg3": seg.get(3, ""),
+                    "seg4": seg.get(4, "0"),
+                    "seg5": seg.get(5, "0"),
+                    "seg6": seg.get(6, "0"),
                 },
             )
         )
@@ -245,10 +263,9 @@ def run(args: argparse.Namespace) -> None:
         for _, row in baza_df.iterrows()
     ]
 
-    # 3. Model BGE-M3 (lazy import — pobieranie ~570 MB przy pierwszym uruchomieniu)
-    log.info("Ładowanie modelu BAAI/bge-m3 (pierwsze uruchomienie pobiera ~570 MB)...")
-    from FlagEmbedding import BGEM3FlagModel  # noqa: PLC0415
-    model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
+    # 3. Klient embedding service (model załadowany w serwisie, nie tutaj)
+    log.info("Łączenie z embedding service (http://localhost:8080)...")
+    model = EmbeddingModel()
 
     # 4. Qdrant (pomijane przy --dry-run)
     qdrant = None
@@ -290,6 +307,7 @@ def run(args: argparse.Namespace) -> None:
                     rows_batch=batch_rows[up_start:up_end],
                     dense_vecs=dense_vecs[up_start:up_end],
                     lexical_weights=lexical_weights[up_start:up_end],
+                    segment_map=segment_map,
                 )
 
         elapsed = time.time() - t0

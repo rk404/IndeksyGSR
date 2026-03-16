@@ -16,14 +16,14 @@ Google Drive (.pst, CSV)
    ┌────┴───────────────┐         ┌────────┴────────┐              ┌───────┴──────┐
    │                    │         │                 │              │              │
    ▼                    ▼         ▼                 ▼              ▼              ▼
-Firestore           Cloud      Firestore         Cloud         Qdrant       BGE-M3
-(emails)           Storage   (product_scrapes)  Storage        Cloud       (wektory)
+Firestore           Cloud      Firestore         Cloud         Qdrant     embed-server
+(emails)           Storage   (product_scrapes)  Storage        Cloud     (BGE-M3 HTTP)
                 (attachments)
         └──────────────────────────────────┴───────────────────────────────┘
                                            │
                                            ▼
                                      dashboard.py (Streamlit)
-                              📧 Maile │ 📦 Produkty │ 🔍 Wyszukiwanie
+                     📧 Maile │ 📦 Produkty │ 🔍 Wyszukiwanie │ 🌐 Wyszukiwanie po URL
 ```
 
 ---
@@ -42,12 +42,15 @@ IndeksyGSR/
 │   ├── app/
 │   │   ├── core/
 │   │   │   ├── search.py       # wyszukiwanie semantyczne (hybrid RRF)
+│   │   │   ├── suggest.py      # auto-sugestia segmentów dla nowych indeksów
 │   │   │   └── extractors.py   # parsery DOM per domena
 │   │   ├── pipeline/
 │   │   │   ├── parse_email.py  # parser .pst → Firestore + GCS
 │   │   │   ├── scrape.py       # web scraper → Firestore
 │   │   │   └── vectorize.py    # BGE-M3 → Qdrant Cloud
 │   │   ├── services/
+│   │   │   ├── embedding_service.py  # FastAPI serwis modeli (BGE-M3 + reranker)
+│   │   │   ├── embedding_client.py   # klient HTTP do embedding_service
 │   │   │   ├── firestore.py    # klient Firestore
 │   │   │   ├── gcs.py          # klient Cloud Storage
 │   │   │   ├── gdrive.py       # klient Google Drive
@@ -55,11 +58,14 @@ IndeksyGSR/
 │   │   ├── dashboard.py        # Streamlit UI
 │   │   └── main.py             # FastAPI (placeholder)
 │   ├── data/                   # pliki CSV i PST (pobierane z Drive, nie w repo)
-│   ├── .env                    # klucze Qdrant — nie commitować!
+│   ├── .env                    # klucze API — nie commitować!
 │   └── service_account.json    # klucz GCP — nie commitować!
 ├── frontend/                   # placeholder
 └── docs/
-    └── implementation_plan_wektoryzacja.md
+    ├── implementation_plan_wektoryzacja.md
+    ├── plan_frontend.md
+    ├── plan_proponowanie_indeksow.md
+    └── plan_usprawnienia_wyszukiwania.md
 ```
 
 ---
@@ -149,6 +155,7 @@ Utwórz plik `backend/.env`:
 ```
 QDRANT_URL=https://<twoj-klaster>.qdrant.io
 QDRANT_API_KEY=<twoj-klucz>
+EMBEDDING_SERVICE_URL=http://localhost:8080   # opcjonalne, domyślnie localhost:8080
 ```
 
 > [!IMPORTANT]
@@ -213,6 +220,7 @@ vectorize --skip-scraping              # nie wczytuj danych z Firestore
 ```bash
 search "śruby M20 ocynkowane ogniowo"
 search "kołnierz DN65 stal" --top-k 5
+search "śruby M20" --rerank                # reranking cross-encoderem
 ```
 
 ### dashboard
@@ -221,6 +229,18 @@ search "kołnierz DN65 stal" --top-k 5
 dashboard
 # → http://localhost:8501
 ```
+
+### embed-server
+
+Serwis FastAPI ładujący modele BGE-M3 i BGE-reranker **raz przy starcie** — eliminuje wielominutowy cold-start przy każdym wywołaniu `search`, `vectorize` czy `dashboard`.
+
+```bash
+embed-server
+# → http://localhost:8080
+```
+
+> [!NOTE]
+> `search`, `vectorize` i `dashboard` korzystają z serwisu automatycznie przez `embedding_client.py`. Adres serwisu można zmienić zmienną środowiskową `EMBEDDING_SERVICE_URL`.
 
 ---
 
@@ -364,15 +384,89 @@ hidden states [seq_len × 1024]
 
 ---
 
+## Serwis embeddingów (`embedding_service.py` + `embedding_client.py`)
+
+Modele BGE-M3 i BGE-reranker ładowane są **raz przy starcie** serwisu FastAPI, a pozostałe moduły (`search.py`, `vectorize.py`, `suggest.py`) komunikują się z nim przez HTTP proxy `embedding_client.py`.
+
+### Uruchomienie serwisu
+
+```bash
+embed-server
+# lub ręcznie:
+uv run uvicorn app.services.embedding_service:app --port 8080
+```
+
+### Endpointy
+
+| Endpoint | Metoda | Opis |
+|---|---|---|
+| `/encode` | POST | Dense (1024-dim) + sparse SPLADE embeddingi z BGE-M3 |
+| `/rerank` | POST | Cross-encoder scores z BGE-reranker-v2-m3 |
+
+```python
+# POST /encode
+{"texts": ["...", "..."], "return_sparse": true}
+# → {"dense_vecs": [[...], ...], "lexical_weights": [{"token": weight}, ...]}
+
+# POST /rerank
+{"query": "...", "passages": ["...", "..."]}
+# → {"scores": [0.85, 0.72, ...]}
+```
+
+---
+
+## Moduł: `suggest.py`
+
+Auto-sugestia segmentów 1–3 hierarchii dla **nowego indeksu materiałowego** — wywoływana z dashboardu gdy żaden wynik wyszukiwania nie pasuje.
+
+### Algorytm
+
+```
+query (string)
+    │
+    ▼  BGE-M3 embed
+query_vec (1024)
+    │
+    ├──→ cosine top-3 w poz.1 (typy indeksów, np. ZŁĄCZKI, ARMATURA)
+    │       │
+    │       └──→ dla każdego seg1: cosine top-2 w poz.2 (grupy asortymentowe)
+    │               │
+    │               └──→ dla każdego seg2: cosine top-2 w poz.3 (podgrupy)
+    │
+    └──→ SegmentProposal (seg1, seg2, seg3, score=avg_similarity)
+```
+
+### Użycie jako moduł
+
+```python
+from app.core.suggest import build_segment_tree, suggest_segments
+import pandas as pd
+
+slownik_df = pd.read_csv("slownik_segmentow.csv")
+tree = build_segment_tree(slownik_df)
+
+proposals = suggest_segments("śruba metryczna M20 cynkowana ogniowo", tree, model, top_n=3)
+# → [SegmentProposal(seg1_text="ZŁĄCZKI", seg2_text="ŚRUBY I NAKRĘTKI", seg3_text="ŚRUBY", score=0.91), ...]
+```
+
+---
+
 ## Moduł: `search.py`
 
-Wyszukiwanie semantyczne w kolekcji Qdrant — hybrid search (dense + sparse) z RRF fusion.
+Wyszukiwanie semantyczne w kolekcji Qdrant — hybrid search (dense + sparse) z RRF fusion. Embeddingi pobierane są przez `embedding_client.py` (HTTP do `embed-server`).
+
+### Normalizacja zapytania
+
+Przed embeddingiem zapytanie jest automatycznie normalizowane:
+- Kody techniczne zamieniane na uppercase (`m20` → `M20`, `dn65` → `DN65`, normy `din`, `iso`, `en`)
+- Synonimy materiałowe: `ocynkowana ogniowo` → `OGNIOWO`, `nierdzewna`/`inox` → `A2`, `kwasoodporna` → `A4`
 
 ### Użycie jako moduł
 
 ```python
 from app.core.search import search
 results = search("śruby M20 ocynkowane ogniowo", top_k=10)
+results = search("śruby M20 ocynkowane ogniowo", top_k=10, rerank=True)
 # → [{indeks, nazwa, komb_id, jdmr_nazwa, score}, ...]
 ```
 
@@ -398,10 +492,16 @@ dashboard
 - Panel szczegółów: tabela specyfikacji, opis, link do sklepu
 - Filtry: tylko z specyfikacjami, tylko poprawne, wyszukiwarka
 
-**🔍 Wyszukiwanie**
+**🔍 Wyszukiwanie semantyczne**
 - Pole tekstowe z opisem produktu
-- Wybór liczby wyników (5 / 10 / 20)
+- Wybór liczby wyników (5 / 10 / 20), opcjonalny reranking
 - Wyniki z indeksem, nazwą, jednostką miary i score RRF
+- Przycisk „Zaproponuj nowy indeks" — wywołuje `suggest.py` gdy żaden wynik nie pasuje
+
+**🌐 Wyszukiwanie po URL sklepu**
+- Podanie URL strony produktu — automatyczny scraping (Playwright headless)
+- Ekstrakcja tytułu i specyfikacji → wyszukiwanie semantyczne w Qdrant
+- Wyniki jak w widoku Wyszukiwanie semantyczne
 
 ---
 

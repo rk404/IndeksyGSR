@@ -18,6 +18,7 @@ import re
 from functools import lru_cache
 
 from qdrant_client import QdrantClient, models
+from app.services.embedding_client import EmbeddingModel, EmbeddingReranker
 
 COLLECTION_NAME = "indeksy"
 QUERY_INSTRUCTION = (
@@ -33,13 +34,24 @@ _TECH_CODE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+# Słownik synonimów: fraza (lowercase) → token normalizacyjny
+_SYNONYMS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bocynkowana?\s+ogniowo\b", re.IGNORECASE), "OGNIOWO"),
+    (re.compile(r"\bocynk(?:owana?)?\s+elektrolityczn(?:ie|a)?\b", re.IGNORECASE), "ELEKTROLITYCZNIE"),
+    (re.compile(r"\bnierdzewna?\b", re.IGNORECASE), "A2"),
+    (re.compile(r"\binox\b", re.IGNORECASE), "A2"),
+    (re.compile(r"\bkwasoodporna?\b", re.IGNORECASE), "A4"),
+]
+
 
 # ──────────────────────────────────────────
 # Normalizacja zapytania
 # ──────────────────────────────────────────
 
 def normalize_query(query: str) -> str:
-    """Normalizuje kody techniczne w zapytaniu do uppercase."""
+    """Normalizuje kody techniczne i synonimy materiałowe w zapytaniu."""
+    for pattern, replacement in _SYNONYMS:
+        query = pattern.sub(replacement, query)
     return _TECH_CODE_RE.sub(lambda m: m.group().upper(), query)
 
 
@@ -48,23 +60,51 @@ def normalize_query(query: str) -> str:
 # ──────────────────────────────────────────
 
 @lru_cache(maxsize=1)
-def _get_model():
-    from FlagEmbedding import BGEM3FlagModel  # noqa: PLC0415
-    return BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
+def _get_model() -> EmbeddingModel:
+    return EmbeddingModel()
 
 
 @lru_cache(maxsize=1)
-def _get_reranker():
-    from FlagEmbedding import FlagReranker  # noqa: PLC0415
-    return FlagReranker(
-        "BAAI/bge-reranker-v2-m3", use_fp16=True, normalize=True
-    )
+def _get_reranker() -> EmbeddingReranker:
+    return EmbeddingReranker()
 
 
 @lru_cache(maxsize=1)
 def _get_qdrant() -> QdrantClient:
     from app.services.qdrant import get_client
     return get_client()
+
+
+@lru_cache(maxsize=1)
+def _load_scrape_map() -> dict[str, dict]:
+    """Ładuje dane scrapingu z Firestore (indeks → {title, specifications}).
+    Cache — ładuje raz na czas życia procesu."""
+    from app.services.firestore import get_client as get_db
+    db = get_db()
+    result = {}
+    for doc in db.collection("product_scrapes").where("status", "==", "ok").stream():
+        d = doc.to_dict()
+        indeks = d.get("indeks") or doc.id
+        result[indeks] = {
+            "title": d.get("title", ""),
+            "specifications": d.get("specifications", {}),
+        }
+    return result
+
+
+def _build_rerank_text(candidate: dict, scrape_map: dict) -> str:
+    """Buduje wzbogacony tekst dla cross-encodera."""
+    parts = [candidate["nazwa"], candidate["jdmr_nazwa"]]
+    scraped = scrape_map.get(candidate["indeks"], {})
+    if scraped.get("title"):
+        parts.append(scraped["title"])
+    if scraped.get("specifications"):
+        specs = " ".join(
+            f"{k}: {v}"
+            for k, v in list(scraped["specifications"].items())[:5]
+        )
+        parts.append(specs)
+    return " | ".join(filter(None, parts))
 
 
 def get_model():
@@ -154,8 +194,9 @@ def search(
 
     if rerank and candidates:
         reranker = _get_reranker()
+        scrape_map = _load_scrape_map()
         pairs = [
-            (query, f"{c['nazwa']} {c['jdmr_nazwa']}")
+            (query, _build_rerank_text(c, scrape_map))
             for c in candidates
         ]
         scores = reranker.compute_score(pairs)
