@@ -15,4 +15,4 @@ def get_client() -> QdrantClient:
     api_key = os.getenv("QDRANT_API_KEY")
     if not url:
         raise RuntimeError("Brak QDRANT_URL w .env")
-    return QdrantClient(url=url, api_key=api_key)
+    return QdrantClient(url=url, api_key=api_key, timeout=120)

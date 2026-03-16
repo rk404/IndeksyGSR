@@ -499,6 +499,110 @@ def _get_qdrant():
         return None
 
 
+@st.cache_data(show_spinner=False)
+def _load_segment_tree():
+    from app.pipeline.vectorize import load_slownik
+    from app.core.suggest import build_segment_tree
+    return build_segment_tree(load_slownik())
+
+
+def _suggest_new_index(query: str, results: list[dict]) -> None:
+    from app.core.suggest import suggest_segments
+
+    st.markdown("### Propozycja nowego indeksu")
+
+    with st.spinner("Ładowanie drzewa segmentów..."):
+        tree = _load_segment_tree()
+
+    model = get_search_model()
+
+    with st.spinner("Szukam pasujących segmentów (1-3)..."):
+        proposals = suggest_segments(query, tree, model, top_n=1)
+
+    best = proposals[0] if proposals else None
+
+    # Defaulty poz. 4-6 z najlepszego wyniku wyszukiwania
+    top_result = results[0] if results else {}
+    default_seg4 = top_result.get("seg4", "0") or "0"
+    default_seg5 = top_result.get("seg5", "0") or "0"
+    default_seg6 = top_result.get("seg6", "0") or "0"
+
+    st.markdown("**Pozycje 1–3** — dobrane automatycznie (możesz zmienić):")
+    col1, col2, col3 = st.columns(3)
+
+    seg1_opts = sorted(set(tree.pos1.values()))
+    with col1:
+        def_idx1 = seg1_opts.index(best.seg1_text) if best and best.seg1_text in seg1_opts else 0
+        sel1 = st.selectbox("Typ indeksu (poz. 1)", seg1_opts, index=def_idx1, key="sug_seg1")
+
+    seg1_slit_id = next((k for k, v in tree.pos1.items() if v == sel1), None)
+    seg2_children = tree.pos2_by_parent.get(seg1_slit_id, []) if seg1_slit_id else []
+    seg2_opts = sorted(set(t for _, t in seg2_children))
+
+    with col2:
+        def_idx2 = seg2_opts.index(best.seg2_text) if best and best.seg2_text in seg2_opts else 0
+        sel2 = st.selectbox("Grupa (poz. 2)", seg2_opts or ["—"], index=def_idx2, key="sug_seg2")
+
+    seg2_slit_id = next((sid for sid, t in seg2_children if t == sel2), None)
+    seg3_children = tree.pos3_by_parent.get(seg2_slit_id, []) if seg2_slit_id else []
+    seg3_opts = sorted(set(t for _, t in seg3_children))
+
+    with col3:
+        def_idx3 = seg3_opts.index(best.seg3_text) if best and best.seg3_text in seg3_opts else 0
+        sel3 = st.selectbox("Podgrupa (poz. 3)", seg3_opts or ["—"], index=def_idx3, key="sug_seg3")
+
+    st.markdown("**Pozycje 4–6** — kody techniczne (domyślnie z najlepszego wyniku):")
+    col4, col5, col6 = st.columns(3)
+
+    pos4_opts = ["0"] + tree.pos4_values
+    pos5_opts = ["0"] + tree.pos5_values
+    pos6_opts = ["0"] + tree.pos6_values
+
+    with col4:
+        def_idx4 = pos4_opts.index(default_seg4) if default_seg4 in pos4_opts else 0
+        sel4 = st.selectbox("Cecha główna (poz. 4)", pos4_opts, index=def_idx4, key="sug_seg4")
+    with col5:
+        def_idx5 = pos5_opts.index(default_seg5) if default_seg5 in pos5_opts else 0
+        sel5 = st.selectbox("Materiał (poz. 5)", pos5_opts, index=def_idx5, key="sug_seg5")
+    with col6:
+        def_idx6 = pos6_opts.index(default_seg6) if default_seg6 in pos6_opts else 0
+        sel6 = st.selectbox("Odbiór (poz. 6)", pos6_opts, index=def_idx6, key="sug_seg6")
+
+    seg3_slit_id = next((sid for sid, t in seg3_children if t == sel3), None)
+
+    # Buduj kod indeksu z KOD_WAROSC dla poz. 1-3 i wartości dla poz. 4-6
+    kod1 = tree.pos1_kod.get(seg1_slit_id, "") if seg1_slit_id else ""
+    kod2 = tree.pos2_kod.get(seg2_slit_id, "") if seg2_slit_id else ""
+    kod3 = tree.pos3_kod.get(seg3_slit_id, "") if seg3_slit_id else ""
+    index_code = f"{kod1}-{kod2}-{kod3}-{sel4}-{sel5}-{sel6}-"
+
+    st.markdown(f"**Kod indeksu:** `{index_code}`")
+
+    # Auto-aktualizacja nazwy przy zmianie segmentów
+    auto_name = " ".join(s for s in [sel1, sel2, sel3, sel4, sel5, sel6] if s and s != "0").upper()
+    if st.session_state.get("sug_last_auto") != auto_name:
+        st.session_state["sug_nazwa"] = auto_name
+        st.session_state["sug_last_auto"] = auto_name
+    nazwa = st.text_input("Nazwa nowego indeksu (NAZWA)", key="sug_nazwa")
+
+    if st.button("💾 Zapisz propozycję do bazy", key="sug_save"):
+        db = get_db()
+        if db:
+            db.collection("proposed_indexes").add({
+                "query": query,
+                "indeks": index_code,
+                "seg1": sel1, "seg2": sel2, "seg3": sel3,
+                "seg4": sel4, "seg5": sel5, "seg6": sel6,
+                "kod1": kod1, "kod2": kod2, "kod3": kod3,
+                "nazwa": nazwa,
+                "proposed_at": datetime.utcnow().isoformat(),
+                "status": "proposed",
+            })
+            st.success(f"Propozycja `{index_code}` zapisana w Firestore (kolekcja: proposed_indexes).")
+        else:
+            st.warning("Brak połączenia z Firestore — propozycja nie została zapisana.")
+
+
 def view_search():
     st.markdown("## 🔍 Wyszukiwanie semantyczne indeksów")
 
@@ -523,7 +627,7 @@ def view_search():
     with col2:
         top_k = st.selectbox("Top", [5, 10, 20], index=1, label_visibility="collapsed")
     with col3:
-        use_reranker = st.checkbox("Cross-encoder reranking", value=False)
+        use_reranker = st.checkbox("Cross-encoder reranking", value=True)
 
     if not query:
         st.info("Wpisz opis produktu aby wyszukać pasujące indeksy materiałowe.")
@@ -559,6 +663,18 @@ def view_search():
         with c2:
             st.progress(score_pct, text=f"score: {r['score']}")
         st.divider()
+
+    st.markdown("---")
+    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
+        st.session_state["suggest_mode"] = True
+        st.session_state["suggest_query"] = query
+        st.session_state["suggest_results"] = results
+
+    if (
+        st.session_state.get("suggest_mode")
+        and st.session_state.get("suggest_query") == query
+    ):
+        _suggest_new_index(query, st.session_state.get("suggest_results", []))
 
 
 # ──────────────────────────────────────────────
@@ -614,6 +730,136 @@ def _build_query_from_scraped(data: dict) -> str:
     return " ".join(parts)[:1000]
 
 
+def _upsert_proposed_to_qdrant(doc_id: str, proposal: dict) -> None:
+    """Wektoryzuje zatwierdzony indeks i upsertuje do Qdrant."""
+    import hashlib
+    from qdrant_client import models as qmodels
+    from app.pipeline.vectorize import lexical_to_sparse
+
+    model = get_search_model()
+    qdrant = _get_qdrant()
+    if qdrant is None:
+        raise RuntimeError("Brak połączenia z Qdrant.")
+
+    seg1 = proposal.get("seg1", "")
+    seg2 = proposal.get("seg2", "")
+    seg3 = proposal.get("seg3", "")
+    seg4 = proposal.get("seg4", "0")
+    seg5 = proposal.get("seg5", "0")
+    seg6 = proposal.get("seg6", "0")
+    nazwa = proposal.get("nazwa", "")
+
+    text = " ".join(filter(None, [seg1, seg2, seg3, nazwa]))
+    output = model.encode(
+        [text],
+        return_dense=True,
+        return_sparse=True,
+        return_colbert_vecs=False,
+    )
+    dense = output["dense_vecs"][0].tolist()
+    sparse = lexical_to_sparse(output["lexical_weights"][0])
+
+    # ID: deterministyczny hash doc_id → unikalne int64 poza zakresem sekwencyjnych (offset 10M)
+    point_id = int(hashlib.md5(doc_id.encode()).hexdigest()[:8], 16) + 10_000_000
+
+    qdrant.upsert(
+        collection_name="indeksy",
+        points=[
+            qmodels.PointStruct(
+                id=point_id,
+                vector={"dense": dense, "sparse": sparse},
+                payload={
+                    "indeks": f"PROP-{doc_id[:8].upper()}",
+                    "nazwa": nazwa,
+                    "komb_id": "",
+                    "jdmr_nazwa": "",
+                    "link": "",
+                    "seg1": seg1, "seg2": seg2, "seg3": seg3,
+                    "seg4": seg4, "seg5": seg5, "seg6": seg6,
+                    "status": "proposed",
+                },
+            )
+        ],
+    )
+
+
+def view_proposed_indexes():
+    st.markdown("## 📝 Propozycje nowych indeksów")
+
+    db = get_db()
+    if db is None:
+        st.error("Brak połączenia z Firestore.")
+        return
+
+    qdrant = _get_qdrant()
+
+    docs = list(db.collection("proposed_indexes").order_by(
+        "proposed_at", direction="DESCENDING"
+    ).stream())
+
+    if not docs:
+        st.info("Brak propozycji. Użyj wyszukiwania i kliknij '❌ Żadna odpowiedź nie jest prawidłowa'.")
+        return
+
+    # Filtry
+    col_f1, col_f2 = st.columns([2, 1])
+    with col_f1:
+        filter_status = st.selectbox(
+            "Status", ["wszystkie", "proposed", "approved", "rejected"], index=0
+        )
+
+    total = len(docs)
+    if filter_status != "wszystkie":
+        docs = [d for d in docs if d.to_dict().get("status") == filter_status]
+
+    st.markdown(f"**{len(docs)}** / {total} propozycji")
+    st.markdown("---")
+
+    for doc in docs:
+        data = doc.to_dict()
+        status = data.get("status", "proposed")
+        query = data.get("query", "")
+        nazwa = data.get("nazwa", "")
+        seg_str = " / ".join(filter(
+            lambda s: s and s != "0",
+            [data.get(f"seg{i}", "") for i in range(1, 7)]
+        ))
+
+        status_color = {"proposed": "#f0a500", "approved": "#2ea44f", "rejected": "#cf222e"}.get(status, "#888")
+        status_label = {"proposed": "oczekuje", "approved": "zatwierdzone", "rejected": "odrzucone"}.get(status, status)
+
+        c_main, c_btn = st.columns([8, 2])
+        with c_main:
+            st.markdown(
+                f'<span style="background:{status_color};color:#fff;padding:2px 8px;'
+                f'border-radius:4px;font-size:.75rem">{status_label}</span> '
+                f'<span style="font-weight:600;margin-left:8px">{html_module.escape(nazwa)}</span>'
+                f'<div style="color:#8b949e;font-size:.8rem;margin-top:4px">'
+                f'Segmenty: <code>{html_module.escape(seg_str)}</code></div>'
+                f'<div style="color:#6e7681;font-size:.75rem">Zapytanie: <em>{html_module.escape(query)}</em>'
+                f' · {data.get("proposed_at", "")[:10]}</div>',
+                unsafe_allow_html=True,
+            )
+
+        with c_btn:
+            if status == "proposed":
+                if qdrant and st.button("✅ Zatwierdź", key=f"app_{doc.id}", type="primary"):
+                    try:
+                        _upsert_proposed_to_qdrant(doc.id, data)
+                        db.collection("proposed_indexes").document(doc.id).update({"status": "approved"})
+                        st.success(f"Dodano do Qdrant jako `PROP-{doc.id[:8].upper()}`.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd: {e}")
+                if st.button("❌ Odrzuć", key=f"rej_{doc.id}"):
+                    db.collection("proposed_indexes").document(doc.id).update({"status": "rejected"})
+                    st.rerun()
+            elif status == "approved":
+                st.caption(f"`PROP-{doc.id[:8].upper()}`")
+
+        st.divider()
+
+
 def view_search_by_url():
     st.markdown("## 🌐 Wyszukiwanie po URL sklepu")
 
@@ -637,7 +883,7 @@ def view_search_by_url():
     with col2:
         top_k = st.selectbox("Top", [5, 10, 20], index=1, label_visibility="collapsed", key="url_top_k")
     with col3:
-        use_reranker = st.checkbox("Cross-encoder reranking", value=False, key="url_reranker")
+        use_reranker = st.checkbox("Cross-encoder reranking", value=True, key="url_reranker")
 
     if not url or not url.startswith("http"):
         st.info("Wklej link do produktu w sklepie internetowym.")
@@ -706,6 +952,18 @@ def view_search_by_url():
             st.progress(score_pct, text=f"score: {r['score']}")
         st.divider()
 
+    st.markdown("---")
+    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="url_suggest_btn"):
+        st.session_state["url_suggest_mode"] = True
+        st.session_state["url_suggest_query"] = query
+        st.session_state["url_suggest_results"] = results
+
+    if (
+        st.session_state.get("url_suggest_mode")
+        and st.session_state.get("url_suggest_query") == query
+    ):
+        _suggest_new_index(query, st.session_state.get("url_suggest_results", []))
+
 
 # ──────────────────────────────────────────────
 # Główna aplikacja
@@ -716,7 +974,7 @@ def main():
     st.sidebar.title("IndeksyGSR")
     view = st.sidebar.radio(
         "Widok",
-        ["📧 Maile", "📦 Produkty (scraping)", "🔍 Wyszukiwanie", "🌐 Po URL sklepu"],
+        ["📧 Maile", "📦 Produkty (scraping)", "🔍 Wyszukiwanie", "🌐 Po URL sklepu", "📝 Propozycje indeksów"],
         label_visibility="collapsed",
     )
 
@@ -731,8 +989,10 @@ def main():
         view_products()
     elif view == "🔍 Wyszukiwanie":
         view_search()
-    else:
+    elif view == "🌐 Po URL sklepu":
         view_search_by_url()
+    else:
+        view_proposed_indexes()
 
 
 if __name__ == "__main__":
