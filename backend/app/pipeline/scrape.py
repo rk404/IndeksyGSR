@@ -40,8 +40,8 @@ DEFAULT_CONCURRENCY = 1
 PAGE_TIMEOUT_MS = 30_000
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.3 Safari/605.1.15",
+    # "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+    # "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.3 Safari/605.1.15",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
 ]
 
@@ -122,12 +122,12 @@ async def human_scroll(page):
 
     for _ in range(random.randint(2, 4)):
         await page.mouse.wheel(0, random.randint(400, 900))
-        await asyncio.sleep(random.uniform(1, 2))
+        await asyncio.sleep(random.uniform(0.125, 0.73))
 
 
 async def human_delay():
 
-    await asyncio.sleep(random.uniform(1, 3))
+    await asyncio.sleep(random.uniform(0.3, 1.5))
 
 
 # ──────────────────────────────────────────────
@@ -238,7 +238,7 @@ async def run_scraping(rows, concurrency, dry_run, db):
 
             await context.storage_state(path=storage_file)
 
-            await asyncio.sleep(random.uniform(10, 20))
+            await asyncio.sleep(random.uniform(0.5, 5))
 
         await browser.close()
 
