@@ -75,32 +75,23 @@ def already_scraped(db: firestore.Client) -> set[str]:
 # ──────────────────────────────────────────────
 
 def load_csv() -> list[dict]:
-
     if not LOCAL_CSV.exists():
-
         log.info("Pobieranie %s z Google Drive...", CSV_FILENAME)
-
         client = GoogleDriveClient()
         files = client.list_files_recursive()
-
         file_map = {f["name"]: f["id"] for f in files}
         fid = file_map.get(CSV_FILENAME)
 
         if not fid:
             raise FileNotFoundError(f"Nie znaleziono {CSV_FILENAME} na Drive")
-
         client.download_file(fid, LOCAL_CSV)
-
     rows = []
 
     with open(LOCAL_CSV, encoding="utf-8-sig", errors="replace") as f:
-
         reader = csv.DictReader(f, delimiter=";")
 
         for row in reader:
-
             url = (row.get("LINK") or "").strip().strip('"')
-
             if url.startswith("http"):
                 rows.append({
                     "indeks": (row.get("INDEKS") or "").strip(),
@@ -111,7 +102,6 @@ def load_csv() -> list[dict]:
                 })
 
     log.info("Wczytano %d wierszy z CSV", len(rows))
-
     return rows
 
 
@@ -120,14 +110,11 @@ def load_csv() -> list[dict]:
 # ──────────────────────────────────────────────
 
 async def human_scroll(page):
-
     for _ in range(random.randint(2, 4)):
         await page.mouse.wheel(0, random.randint(400, 900))
         await asyncio.sleep(random.uniform(0.125, 0.73))
 
-
 async def human_delay():
-
     await asyncio.sleep(random.uniform(0.3, 1.5))
 
 
@@ -136,7 +123,6 @@ async def human_delay():
 # ──────────────────────────────────────────────
 
 async def scrape_one(page, row, dry_run, db):
-
     url = row["link"]
     indeks = row["indeks"]
 
@@ -158,7 +144,6 @@ async def scrape_one(page, row, dry_run, db):
     }
 
     try:
-
         await page.goto(url, timeout=PAGE_TIMEOUT_MS)
 
         if any(securedPage in url for securedPage in BotSecuredPages):
@@ -168,32 +153,23 @@ async def scrape_one(page, row, dry_run, db):
         extracted = await extract(page, url)
 
         if not extracted.get("title"):
-
             body_text = await page.evaluate(
                 "() => document.body?.innerText || ''"
             )
-
             extracted["description"] = body_text[:3000]
             extracted["title"] = await page.title()
-
         result.update(extracted)
-
         result["status"] = "ok"
 
     except (PWTimeout, PWError) as exc:
-
         result["error"] = type(exc).__name__
-
         log.warning("Błąd: %s %s", url[:50], exc)
 
     except Exception as exc:
-
         result["error"] = str(exc)[:200]
-
         log.warning("Błąd: %s %s", url[:50], exc)
 
     if not dry_run and db:
-
         db.collection(COLLECTION).document(indeks).set(result)
 
     return result
@@ -204,20 +180,15 @@ async def scrape_one(page, row, dry_run, db):
 # ──────────────────────────────────────────────
 
 async def run_scraping(rows, concurrency, dry_run, db):
-
     results = []
 
     storage_file = "storage.json"
-
     async with async_playwright() as pw:
-
         browser = await pw.chromium.launch(
             headless=False,
             slow_mo=150,
         )
-
         ua = random.choice(USER_AGENTS)
-
         context_args = dict(
             user_agent=ua,
             locale="pl-PL",
@@ -228,19 +199,13 @@ async def run_scraping(rows, concurrency, dry_run, db):
             context_args["storage_state"] = storage_file
 
         context = await browser.new_context(**context_args)
-
         page = await context.new_page()
 
         for row in rows:
-
             r = await scrape_one(page, row, dry_run, db)
-
             results.append(r)
-
             await context.storage_state(path=storage_file)
-
             await asyncio.sleep(random.uniform(0.5, 5))
-
         await browser.close()
 
     return results
@@ -251,9 +216,7 @@ async def run_scraping(rows, concurrency, dry_run, db):
 # ──────────────────────────────────────────────
 
 def main():
-
     ap = argparse.ArgumentParser()
-
     ap.add_argument("--limit", type=int)
     ap.add_argument("--sample", type=int)
     ap.add_argument("--domain")
@@ -266,38 +229,29 @@ def main():
     rows = load_csv()
 
     if args.domain:
-
         domain = args.domain.lower().removeprefix("www.")
-
         rows = [
             r for r in rows
             if urlparse(r["link"]).netloc.lower().removeprefix("www.") == domain
         ]
-
         log.info("Po filtrze domeny '%s': %d", args.domain, len(rows))
 
     db = None if args.dry_run else get_db()
 
     if args.resume and db:
-
         done = already_scraped(db)
-
         before = len(rows)
-
         rows = [r for r in rows if r["indeks"] not in done]
 
         log.info("Pomijam %d już zescrapowanych", before - len(rows))
 
     if args.sample:
-
         rows = random.sample(rows, min(args.sample, len(rows)))
 
     elif args.limit:
-
         rows = rows[: args.limit]
 
     log.info("Start scrapowania: %d URL", len(rows))
-
     t0 = time.time()
 
     results = asyncio.run(
@@ -306,7 +260,6 @@ def main():
 
     ok = sum(1 for r in results if r["status"] == "ok")
     err = sum(1 for r in results if r["status"] != "ok")
-
     elapsed = time.time() - t0
 
     print()
