@@ -49,7 +49,6 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     datefmt="%H:%M:%S",
 )
-
 log = logging.getLogger(__name__)
 
 
@@ -123,7 +122,6 @@ async def human_delay():
 async def scrape_one(page, row, dry_run, db):
     url = row["link"]
     indeks = row["indeks"]
-
     log.info("→ %s %s", indeks, url[:80])
 
     result = {
@@ -240,7 +238,6 @@ def main():
         done = already_scraped(db)
         before = len(rows)
         rows = [r for r in rows if r["indeks"] not in done]
-
         log.info("Pomijam %d już zescrapowanych", before - len(rows))
 
     if args.sample:
