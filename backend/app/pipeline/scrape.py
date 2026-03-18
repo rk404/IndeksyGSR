@@ -37,7 +37,7 @@ LOCAL_CSV = Path(__file__).parent.parent.parent / "data" / CSV_FILENAME
 
 COLLECTION = "product_scrapes"
 
-DEFAULT_CONCURRENCY = 1
+DEFAULT_CONCURRENCY = 5
 PAGE_TIMEOUT_MS = 30_000
 
 USER_AGENTS = [
