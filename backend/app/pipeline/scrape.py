@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from enums import BotSecuredPages
 
 from playwright.async_api import (
     async_playwright,
@@ -160,9 +161,9 @@ async def scrape_one(page, row, dry_run, db):
 
         await page.goto(url, timeout=PAGE_TIMEOUT_MS)
 
-        await human_delay()
-
-        await human_scroll(page)
+        if any(securedPage in url for securedPage in BotSecuredPages):
+            await human_delay()
+            await human_scroll(page)
 
         extracted = await extract(page, url)
 

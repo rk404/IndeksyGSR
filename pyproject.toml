@@ -21,7 +21,6 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "spacy==3.8.11",
     "pl-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl",
-    "playwright-stealth>=2.0.2",
 ]
 
 [project.optional-dependencies]
