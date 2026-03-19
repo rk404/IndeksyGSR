@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
-from .enums import BotSecuredPages
+from app.pipeline.enums import BotSecuredPages
 
 from playwright.async_api import (
     async_playwright,

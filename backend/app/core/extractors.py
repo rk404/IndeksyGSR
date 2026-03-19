@@ -191,19 +191,20 @@ async def extract_allegro(page) -> dict:
 async def bypass_antibot_protection(page):
     html = await page.content()
     if is_antibot_protected(html):
+        default_timeout = 4000
         # Reload the page
         print("Blocked by captcha")
         await page.reload()
         await page.content()
 
         # Submit button
-        await page.wait_for_selector("iframe[src*='captcha-delivery']")
-        iframe = await page.wait_for_selector("iframe[src*='captcha-delivery']")
+        await page.wait_for_selector("iframe[src*='captcha-delivery']", timeout=default_timeout)
+        iframe = await page.wait_for_selector("iframe[src*='captcha-delivery']", timeout=default_timeout)
         frame = await iframe.content_frame()
         btn = frame.locator(".captcha_display_button_submit")
 
         # Move the slider
-        await btn.wait_for()
+        await btn.wait_for(timeout=default_timeout)
         await btn.scroll_into_view_if_needed()
         await btn.click()
 

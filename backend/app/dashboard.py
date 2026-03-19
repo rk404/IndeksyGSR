@@ -14,9 +14,9 @@ import subprocess
 
 from playwright.sync_api import ViewportSize
 
-from pipeline.enums import BotSecuredPages
-from pipeline.scrape import human_delay
-from pipeline.scrape import human_scroll
+from app.pipeline.enums import BotSecuredPages
+from app.pipeline.scrape import human_delay
+from app.pipeline.scrape import human_scroll
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
