@@ -183,6 +183,7 @@ def search(
 
     candidates = [
         {
+            "qdrant_id":  p.id,                          # ← dodaj tę linię
             "indeks":     p.payload.get("indeks", ""),
             "nazwa":      p.payload.get("nazwa", ""),
             "komb_id":    p.payload.get("komb_id", ""),
@@ -190,7 +191,7 @@ def search(
             "score":      round(p.score, 4),
         }
         for p in results.points
-    ]
+    ]    
 
     if rerank and candidates:
         reranker = _get_reranker()

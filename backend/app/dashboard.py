@@ -696,12 +696,13 @@ def view_search():
                     db.collection("search_selections").add({
                         "query": query,
                         "source": "text",
+                        "qdrant_id": r.get("qdrant_id"),        # ← dodaj
                         "indeks": r["indeks"],
                         "nazwa": r["nazwa"],
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
                         "score": float(r["score"]),
                         "saved_at": datetime.utcnow().isoformat(),
-                    })
+                    })                    
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
             else:
                 st.warning("Brak połączenia z Firestore.")
@@ -1109,6 +1110,7 @@ def view_search_by_url():
                         "query": query,
                         "source": "url",
                         "source_url": url,
+                        "qdrant_id": r.get("qdrant_id"),   # ← dodaj tę linię
                         "indeks": r["indeks"],
                         "nazwa": r["nazwa"],
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
@@ -1148,6 +1150,9 @@ def main():
     st.sidebar.markdown("---")
     if st.sidebar.button("🔄 Odśwież dane"):
         st.cache_data.clear()
+        for key in list(st.session_state.keys()):
+            if key.startswith("_search_results_"):
+                del st.session_state[key]
         st.rerun()
 
     if view == "📧 Maile":
