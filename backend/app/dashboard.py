@@ -9,11 +9,9 @@ import asyncio
 import html as html_module
 import os
 import random
-import subprocess
 import sys
 import json
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
