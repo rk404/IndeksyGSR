@@ -9,6 +9,9 @@ import asyncio
 import html as html_module
 import os
 import random
+import sys
+import json
+
 import platform
 import subprocess
 
@@ -21,6 +24,13 @@ from app.pipeline.scrape import human_scroll
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 from datetime import datetime, timedelta
+
+# Apply nest_asyncio early to fix Windows asyncio subprocess issues
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except RuntimeError:
+    pass
 
 import pandas as pd
 import streamlit as st
@@ -642,12 +652,15 @@ def view_search():
         return
 
     spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie..."
-    with st.spinner(spinner_msg):
-        try:
-            results = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
-        except Exception as e:
-            st.error(f"Błąd wyszukiwania: {e}")
-            return
+    _cache_key = f"_search_results_{query}_{top_k}_{use_reranker}"
+    if _cache_key not in st.session_state:
+        with st.spinner(spinner_msg):
+            try:
+                st.session_state[_cache_key] = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
+            except Exception as e:
+                st.error(f"Błąd wyszukiwania: {e}")
+                return
+    results = st.session_state[_cache_key]
 
     if not results:
         st.warning("Brak wyników. Sprawdź czy kolekcja Qdrant jest zwektoryzowana (`python vectorize.py`).")
@@ -658,7 +671,9 @@ def view_search():
 
     for i, r in enumerate(results, 1):
         score_pct = min(int(r["score"] * 100), 100)
-        c1, c2 = st.columns([9, 2])
+        c0, c1, c2 = st.columns([1, 8, 2])
+        with c0:
+            st.checkbox("", key=f"sel_search_{r['indeks']}", label_visibility="collapsed")
         with c1:
             st.markdown(
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
@@ -669,20 +684,39 @@ def view_search():
                 unsafe_allow_html=True,
             )
         with c2:
-            st.progress(score_pct, text=f"score: {r['score']}")
+            st.progress(score_pct, text=f"score: {r['score']:.2f}")
         st.divider()
+
+    sel_results = [r for r in results if st.session_state.get(f"sel_search_{r['indeks']}")]
+    if sel_results:
+        if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_search"):
+            db = get_db()
+            if db:
+                for r in sel_results:
+                    db.collection("search_selections").add({
+                        "query": query,
+                        "source": "text",
+                        "indeks": r["indeks"],
+                        "nazwa": r["nazwa"],
+                        "jdmr_nazwa": r.get("jdmr_nazwa", ""),
+                        "score": float(r["score"]),
+                        "saved_at": datetime.utcnow().isoformat(),
+                    })
+                st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
+            else:
+                st.warning("Brak połączenia z Firestore.")
 
     st.markdown("---")
     if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
-        st.session_state["suggest_mode"] = True
-        st.session_state["suggest_query"] = query
-        st.session_state["suggest_results"] = results
+        st.session_state["url_suggest_mode"] = True
+        st.session_state["url_suggest_query"] = query
+        st.session_state["url_suggest_results"] = results
 
     if (
-        st.session_state.get("suggest_mode")
-        and st.session_state.get("suggest_query") == query
+        st.session_state.get("url_suggest_mode")
+        and st.session_state.get("url_suggest_query") == query
     ):
-        _suggest_new_index(query, st.session_state.get("suggest_results", []))
+        _suggest_new_index(query, st.session_state.get("url_suggest_results", []))
 
 
 # ──────────────────────────────────────────────
@@ -773,7 +807,57 @@ def hide_browser_window():
 
 
 def _scrape_url(url: str) -> dict:
-    return asyncio.run(_async_scrape_url(url))
+    """Wrapper that runs async scraping in isolated subprocess to avoid asyncio issues on Windows."""
+    code = f"""
+import asyncio
+from app.core.extractors import extract
+from playwright.async_api import async_playwright
+import random
+
+async def scrape():
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    ]
+    
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        ctx = await browser.new_context(viewport={{"width": 1280, "height": 800}}, locale="pl-PL")
+        page = await ctx.new_page()
+        await page.set_extra_http_headers({{
+            "User-Agent": random.choice(user_agents),
+            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
+        }})
+        extracted = {{"title": "", "description": "", "specifications": {{}}, "price": ""}}
+        try:
+            await page.goto("{url}", wait_until="networkidle", timeout=30000)
+            extracted = await extract(page, "{url}")
+        except Exception as e:
+            extracted["error"] = str(e)
+        finally:
+            await browser.close()
+        return extracted
+
+result = asyncio.run(scrape())
+import json
+print(json.dumps(result))
+"""
+    
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if proc.returncode == 0:
+            return json.loads(proc.stdout.strip())
+        else:
+            return {"error": f"Subprocess error: {proc.stderr}"}
+    except subprocess.TimeoutExpired:
+        return {"error": "Scraping timeout"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def _build_query_from_scraped(data: dict) -> str:
@@ -980,12 +1064,15 @@ def view_search_by_url():
         return
 
     spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie w Qdrant..."
-    with st.spinner(spinner_msg):
-        try:
-            results = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
-        except Exception as e:
-            st.error(f"Błąd wyszukiwania: {e}")
-            return
+    _cache_key = f"_search_results_{query}_{top_k}_{use_reranker}"
+    if _cache_key not in st.session_state:
+        with st.spinner(spinner_msg):
+            try:
+                st.session_state[_cache_key] = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
+            except Exception as e:
+                st.error(f"Błąd wyszukiwania: {e}")
+                return
+    results = st.session_state[_cache_key]
 
     if not results:
         st.warning("Brak wyników.")
@@ -996,7 +1083,9 @@ def view_search_by_url():
 
     for i, r in enumerate(results, 1):
         score_pct = min(int(r["score"] * 100), 100)
-        c1, c2 = st.columns([9, 2])
+        c0, c1, c2 = st.columns([1, 8, 2])
+        with c0:
+            st.checkbox("", key=f"sel_url_{r['indeks']}", label_visibility="collapsed")
         with c1:
             st.markdown(
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
@@ -1007,11 +1096,31 @@ def view_search_by_url():
                 unsafe_allow_html=True,
             )
         with c2:
-            st.progress(score_pct, text=f"score: {r['score']}")
+            st.progress(score_pct, text=f"score: {r['score']:.2f}")
         st.divider()
 
+    sel_results = [r for r in results if st.session_state.get(f"sel_url_{r['indeks']}")]
+    if sel_results:
+        if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_url"):
+            db = get_db()
+            if db:
+                for r in sel_results:
+                    db.collection("search_selections").add({
+                        "query": query,
+                        "source": "url",
+                        "source_url": url,
+                        "indeks": r["indeks"],
+                        "nazwa": r["nazwa"],
+                        "jdmr_nazwa": r.get("jdmr_nazwa", ""),
+                        "score": float(r["score"]),
+                        "saved_at": datetime.utcnow().isoformat(),
+                    })
+                st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
+            else:
+                st.warning("Brak połączenia z Firestore.")
+
     st.markdown("---")
-    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="url_suggest_btn"):
+    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
         st.session_state["url_suggest_mode"] = True
         st.session_state["url_suggest_query"] = query
         st.session_state["url_suggest_results"] = results
