@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
-from enums import BotSecuredPages
+from .enums import BotSecuredPages
 
 from playwright.async_api import (
     async_playwright,
@@ -181,7 +181,7 @@ async def run_scraping(rows, concurrency, dry_run, db):
     storage_file = "storage.json"
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=False,
+            headless=True,
             slow_mo=150,
         )
         ua = random.choice(USER_AGENTS)
