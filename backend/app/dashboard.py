@@ -12,6 +12,14 @@ import random
 import sys
 import json
 
+import platform
+import subprocess
+
+from playwright.sync_api import ViewportSize
+
+from app.pipeline.enums import BotSecuredPages
+from app.pipeline.scrape import human_delay
+from app.pipeline.scrape import human_scroll
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -716,10 +724,11 @@ def view_search():
 # ──────────────────────────────────────────────
 
 _USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    # "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    # "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    # "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    # "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
 ]
 
 
@@ -728,16 +737,24 @@ async def _async_scrape_url(url: str) -> dict:
     from app.core.extractors import extract  # noqa: PLC0415
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(viewport={"width": 1280, "height": 800}, locale="pl-PL")
+        browser = await pw.chromium.launch(headless=False)
+        ctx = await browser.new_context(viewport=ViewportSize({"width": 1400, "height": 900}), locale="pl-PL")
         page = await ctx.new_page()
+
         await page.set_extra_http_headers({
             "User-Agent": random.choice(_USER_AGENTS),
             "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
         })
+
         try:
-            await page.goto(url, timeout=30_000, wait_until="load")
-            await page.wait_for_timeout(2000)
+            hide_browser_window()
+            await page.goto(url, timeout=20_000, wait_until="load")
+
+            if any(securedPage in url for securedPage in BotSecuredPages):
+                await human_delay()
+                await human_scroll(page)
+
+            # await page.wait_for_timeout(2000)
             extracted = await extract(page, url)
             if not extracted.get("title") and not extracted.get("description"):
                 body = await page.evaluate("() => document.body?.innerText || ''")
@@ -746,6 +763,47 @@ async def _async_scrape_url(url: str) -> dict:
         finally:
             await browser.close()
     return extracted
+
+def hide_browser_window():
+    system = platform.system()
+
+    try:
+        if system == "Linux":
+            # wymaga: sudo apt install xdotool
+            result = subprocess.check_output(
+                ["xdotool", "search", "--onlyvisible", "--class", "Chromium"]
+            )
+            window_ids = result.decode().split()
+
+            for wid in window_ids:
+                subprocess.call(["xdotool", "windowminimize", wid])
+                # lub:
+                # subprocess.call(["xdotool", "windowmove", wid, "-2000", "-2000"])
+
+        elif system == "Windows":
+            import win32gui
+            import win32con
+
+            def callback(hwnd, _):
+                title = win32gui.GetWindowText(hwnd)
+                if "Chrome" in title or "Chromium" in title:
+                    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+
+            win32gui.EnumWindows(callback, None)
+
+        elif system == "Darwin":  # macOS
+            # AppleScript – minimalizuje wszystkie okna Chrome
+            script = """
+            tell application "Google Chrome"
+                repeat with w in windows
+                    set miniaturized of w to true
+                end repeat
+            end tell
+            """
+            subprocess.call(["osascript", "-e", script])
+
+    except Exception as e:
+        print(f"[WARN] Nie udało się ukryć okna: {e}")
 
 
 def _scrape_url(url: str) -> dict:
