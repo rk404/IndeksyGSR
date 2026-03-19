@@ -82,6 +82,12 @@ Skrypt automatycznie:
 3. pobiera przeglądarkę Chromium dla Playwright
 4. pobiera modele HuggingFace: `BAAI/bge-m3` (~570 MB) i `BAAI/bge-reranker-v2-m3` (~1.1 GB)
 
+Ponadto dla systemu Linux wymagana jest instalacja xdotool
+
+```bash
+sudo apt install xdotool
+```
+
 ### Obsługa plików `.pst` (parse-email)
 
 Biblioteka `libpff` wymagana przez `parse-email` **nie ma gotowych kół dla Windows** — na wszystkich platformach trzeba ją instalować osobno flagą `--with-pst`:
