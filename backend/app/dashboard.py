@@ -28,8 +28,10 @@ from datetime import datetime, timedelta
 # Apply nest_asyncio early to fix Windows asyncio subprocess issues
 try:
     import nest_asyncio
-    nest_asyncio.apply()
-except RuntimeError:
+    loop = asyncio.get_event_loop()
+    if type(loop).__module__.startswith("asyncio"):
+        nest_asyncio.apply()
+except Exception:
     pass
 
 import pandas as pd
