@@ -910,7 +910,7 @@ def _upsert_proposed_to_qdrant(doc_id: str, proposal: dict) -> None:
         points=[
             qmodels.PointStruct(
                 id=point_id,
-                vector={"dense": dense, "sparse": sparse},
+                vector={"dense": dense, "sparse": sparse, "pomocniczy": [0.0] * 1024},
                 payload={
                     "indeks": f"PROP-{doc_id[:8].upper()}",
                     "nazwa": nazwa,
