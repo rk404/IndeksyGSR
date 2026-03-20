@@ -314,8 +314,20 @@ Jednorazowa wektoryzacja całej bazy indeksów (~69k) modelem BGE-M3 i upload do
 - Firestore `product_scrapes` — opcjonalne uzupełnienie (tytuły i specyfikacje ze scrapingu)
 
 **Model:** `BAAI/bge-m3` (dense 1024-dim + sparse SPLADE-like, ~570 MB)
-**Kolekcja Qdrant:** `indeksy` (dense COSINE + sparse)
+**Kolekcja Qdrant:** `indeksy` (dense COSINE + sparse + pomocniczy COSINE)
 **Czas wektoryzacji:** ~68 min dla 68 991 indeksów (GPU/CPU)
+
+### Wektory w kolekcji Qdrant
+
+Każdy punkt przechowuje trzy reprezentacje wektorowe:
+
+| Wektor | Rozmiar | Treść | Zastosowanie |
+|---|---|---|---|
+| `dense` | 1024 float | Pełny tekst (segmenty + nazwa + scraping) | Główne wyszukiwanie semantyczne |
+| `sparse` | ~100–300 wpisów | SPLADE weights z pełnego tekstu | Wyszukiwanie leksykalne (hybrid RRF) |
+| `pomocniczy` | 1024 float | Tylko `NAZWA` z CSV | Wyszukiwanie po czystej nazwie indeksu |
+
+Podział na `dense` i `pomocniczy` pozwala w przyszłości budować zapytania hybrydowe — np. ważąc podobieństwo pełnego opisu produktu i samej nazwy indeksu.
 
 ### Budowanie tekstu do wektoryzacji
 
@@ -384,9 +396,16 @@ hidden states [seq_len × 1024]
 | Pole | Opis |
 |---|---|
 | `indeks` | Kod indeksu materiałowego |
-| `nazwa` | Nazwa z bazy |
+| `nazwa` | Nazwa z bazy (`NAZWA` z CSV) |
 | `komb_id` | ID kombinacji segmentów |
 | `jdmr_nazwa` | Jednostka miary |
+| `link` | URL produktu (uzupełniany przez scraper) |
+| `seg1` | Segment pozycja 1 (typ indeksu) |
+| `seg2` | Segment pozycja 2 (grupa asortymentowa) |
+| `seg3` | Segment pozycja 3 (podgrupa) |
+| `seg4` | Kod cechy głównej |
+| `seg5` | Kod materiału |
+| `seg6` | Kod odbioru |
 
 ---
 
@@ -500,14 +519,22 @@ dashboard
 
 **🔍 Wyszukiwanie semantyczne**
 - Pole tekstowe z opisem produktu
-- Wybór liczby wyników (5 / 10 / 20), opcjonalny reranking
-- Wyniki z indeksem, nazwą, jednostką miary i score RRF
+- Wybór liczby wyników (5 / 10 / 20), opcjonalny reranking (cross-encoder BGE-reranker-v2-m3)
+- Wyniki z checkboxami do zaznaczania — zapis zaznaczonych do Firestore `search_selections`
+- Każdy wynik zawiera: indeks, nazwę, jednostkę miary, score RRF i `qdrant_id` punktu
+- Wyniki cachowane w `st.session_state` — reranking nie odpala się przy każdej zmianie checkboxa
 - Przycisk „Zaproponuj nowy indeks" — wywołuje `suggest.py` gdy żaden wynik nie pasuje
 
 **🌐 Wyszukiwanie po URL sklepu**
-- Podanie URL strony produktu — automatyczny scraping (Playwright headless)
+- Podanie URL strony produktu — automatyczny scraping (Playwright headless, subprocess isolation)
 - Ekstrakcja tytułu i specyfikacji → wyszukiwanie semantyczne w Qdrant
-- Wyniki jak w widoku Wyszukiwanie semantyczne
+- Wyniki z checkboxami — zapis zaznaczonych do Firestore `search_selections` (ze source `url`)
+
+**📝 Propozycje indeksów**
+- Lista propozycji nowych indeksów z `proposed_indexes` Firestore
+- Filtry statusu: `proposed` / `approved` / `rejected`
+- Przyciski zatwierdzania / odrzucania
+- Zatwierdzenie → automatyczny upsert punktu do Qdrant (`_upsert_proposed_to_qdrant`)
 
 ---
 
