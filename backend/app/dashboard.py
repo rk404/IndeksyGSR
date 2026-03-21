@@ -676,7 +676,7 @@ def view_search():
         st.info("Wpisz opis produktu aby wyszukać pasujące indeksy materiałowe.")
         return
 
-    query = normalize_query(query)
+    
     output = model.encode(
         [QUERY_INSTRUCTION + query],
         return_dense=True,
