@@ -3,7 +3,7 @@ groq_client.py — Klient Groq API do generowania opisów indeksów materiałowy
 
 Wymagane zmienne środowiskowe (.env):
     GROQ_API_KEY=gsk_...
-    GROQ_MODEL=llama-3.3-70b-versatile   (opcjonalnie, domyślnie llama-3.3-70b-versatile)
+    GROQ_MODEL=llama-3.3-70b-versatile   (opcjonalnie)
 """
 
 from __future__ import annotations
@@ -28,31 +28,24 @@ Nie wymyślaj danych — opieraj się wyłącznie na dostarczonych informacjach.
 
 
 def _build_prompt(scraped: dict, nazwa: str = "", indeks: str = "") -> str:
-    """Buduje prompt użytkownika z danych scrapowanych."""
     parts = []
-
     if indeks:
         parts.append(f"Kod indeksu: {indeks}")
     if nazwa:
         parts.append(f"Nazwa indeksu: {nazwa}")
-
     title = scraped.get("title", "").strip()
     if title:
         parts.append(f"Tytuł produktu ze sklepu: {title}")
-
     price = scraped.get("price", "").strip()
     if price:
         parts.append(f"Cena: {price}")
-
     specs = scraped.get("specifications") or {}
     if specs:
         spec_lines = "\n".join(f"  {k}: {v}" for k, v in list(specs.items())[:30])
         parts.append(f"Specyfikacja techniczna:\n{spec_lines}")
-
     desc = (scraped.get("description") or "").strip()
     if desc:
         parts.append(f"Opis ze strony produktu:\n{desc[:1500]}")
-
     parts.append("\nWygeneruj rozszerzony opis indeksu materiałowego.")
     return "\n\n".join(parts)
 
@@ -63,25 +56,11 @@ def generate_index_description(
     indeks: str = "",
     model: str | None = None,
 ) -> str:
-    """
-    Wysyła dane scrapowane do Groq LLM i zwraca rozszerzony opis indeksu.
-
-    Args:
-        scraped:  Słownik z kluczami title, description, specifications, price.
-        nazwa:    Nazwa indeksu z bazy (np. "ŚRUBA M12x50 kl.8.8 ocynkowana")
-        indeks:   Kod indeksu (np. "AB-12-03-0-0-0-")
-        model:    Opcjonalna nadpisania modelu Groq
-
-    Returns:
-        Wygenerowany opis lub komunikat błędu zaczynający się od "BŁĄD:".
-    """
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         return "BŁĄD: Brak GROQ_API_KEY w pliku .env"
-
     used_model = model or os.getenv("GROQ_MODEL", _DEFAULT_MODEL)
     prompt = _build_prompt(scraped, nazwa=nazwa, indeks=indeks)
-
     try:
         resp = httpx.post(
             _API_URL,
