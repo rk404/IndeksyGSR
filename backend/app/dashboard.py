@@ -620,7 +620,32 @@ def _suggest_new_index(query: str, results: list[dict]) -> None:
         else:
             st.warning("Brak połączenia z Firestore — propozycja nie została zapisana.")
 
+def _update_pomocniczy_vector(query: str, sel_results: list[dict]) -> None:
+    """Aktualizuje wektor 'pomocniczy' w Qdrant dla zaznaczonych indeksów — treść = query użytkownika."""
+    qdrant = _get_qdrant()
+    if qdrant is None:
+        return
+    model = get_search_model()
+    output = model.encode(
+        [query],
+        return_dense=True,
+        return_sparse=False,
+        return_colbert_vecs=False,
+    )
+    vec = output["dense_vecs"][0].tolist()
 
+    from qdrant_client import models as qmodels
+    points = [
+        qmodels.PointVectors(
+            id=r["qdrant_id"],
+            vector={"pomocniczy": vec},
+        )
+        for r in sel_results
+        if r.get("qdrant_id") is not None
+    ]
+    if points:
+        qdrant.update_vectors(collection_name="indeksy", points=points)
+        
 def view_search():
     st.markdown("## 🔍 Wyszukiwanie semantyczne indeksów")
 
@@ -702,8 +727,12 @@ def view_search():
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
                         "score": float(r["score"]),
                         "saved_at": datetime.utcnow().isoformat(),
-                    })                    
+                    })
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
+                try:
+                    _update_pomocniczy_vector(query, sel_results)
+                except Exception as e:
+                    st.warning(f"Zapis do Firestore OK, ale aktualizacja wektora pomocniczego nie powiodła się: {e}")
             else:
                 st.warning("Brak połączenia z Firestore.")
 
@@ -1118,6 +1147,10 @@ def view_search_by_url():
                         "saved_at": datetime.utcnow().isoformat(),
                     })
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
+                try:
+                    _update_pomocniczy_vector(query, sel_results)
+                except Exception as e:
+                    st.warning(f"Zapis do Firestore OK, ale aktualizacja wektora pomocniczego nie powiodła się: {e}")
             else:
                 st.warning("Brak połączenia z Firestore.")
 
