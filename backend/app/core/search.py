@@ -199,12 +199,13 @@ def search(
 
     candidates = [
         {
-            "qdrant_id":  p.id,                          # ← dodaj tę linię
-            "indeks":     p.payload.get("indeks", ""),
-            "nazwa":      p.payload.get("nazwa", ""),
-            "komb_id":    p.payload.get("komb_id", ""),
-            "jdmr_nazwa": p.payload.get("jdmr_nazwa", ""),
-            "score":      round(p.score, 4),
+            "qdrant_id":       p.id,
+            "indeks":          p.payload.get("indeks", ""),
+            "nazwa":           p.payload.get("nazwa", ""),
+            "komb_id":         p.payload.get("komb_id", ""),
+            "jdmr_nazwa":      p.payload.get("jdmr_nazwa", ""),
+            "score":           round(p.score, 4),
+            "_pomocniczy_vec": p.vector.get("pomocniczy") if p.vector else None,
         }
         for p in results.points
     ]    
