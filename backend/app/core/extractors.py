@@ -133,12 +133,31 @@ async def _best_description(page) -> str:
         "[class*='description']", "[class*='desc']",
         "article", ".content", "main",
     ]
+
+    def _is_cookie_text(t: str) -> bool:
+        t_low = t.lower()
+        keywords = [
+            "cookie", "cookies", "gdpr", "consent",
+            "privacy policy", "privacy settings",
+            "we use cookies", "this site uses cookies",
+            "akceptuj cookies", "zgoda na cookies",
+            "ustawienia prywatności",
+            "wir verwenden cookies",
+            "nous utilisons des cookies",
+            "utilizamos cookies"
+        ]
+        return any(k in t_low for k in keywords)
+
     best = ""
     for sel in candidates:
         try:
             els = await page.query_selector_all(sel)
             for el in els:
                 t = _clean(await el.inner_text())
+                # Pomija tekst kory jest polityka cookie
+                if _is_cookie_text(t):
+                    continue
+
                 # Odrzuć zbyt krótkie i zbyt długie (prawdop. cała strona)
                 if 50 < len(t) < 5000 and len(t) > len(best):
                     best = t
