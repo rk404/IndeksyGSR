@@ -161,7 +161,17 @@ def search(
     query_dense = output["dense_vecs"][0].tolist()
     query_sparse = _lexical_to_sparse(output["lexical_weights"][0])
 
+    # Osobne enkodowanie dla wektora pomocniczy (bez instrukcji — tak jak był zapisany)
+    output_pom = model.encode(
+        [query],
+        return_dense=True,
+        return_sparse=False,
+        return_colbert_vecs=False,
+    )
+    query_pomocniczy = output_pom["dense_vecs"][0].tolist()
+
     fetch_limit = top_k * 5 if rerank else top_k
+    query_pomocniczy = query_pomocniczy.copy()
     results = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         prefetch=[
@@ -175,22 +185,30 @@ def search(
                 using="dense",
                 limit=fetch_limit * 3,
             ),
+            models.Prefetch(
+                query=query_pomocniczy,
+                using="pomocniczy",
+                limit=fetch_limit * 3,
+            ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=fetch_limit,
         with_payload=True,
+        with_vectors=["pomocniczy"],   # potrzebne do cross-encoder boostingu
     )
 
     candidates = [
         {
-            "indeks":     p.payload.get("indeks", ""),
-            "nazwa":      p.payload.get("nazwa", ""),
-            "komb_id":    p.payload.get("komb_id", ""),
-            "jdmr_nazwa": p.payload.get("jdmr_nazwa", ""),
-            "score":      round(p.score, 4),
+            "qdrant_id":       p.id,
+            "indeks":          p.payload.get("indeks", ""),
+            "nazwa":           p.payload.get("nazwa", ""),
+            "komb_id":         p.payload.get("komb_id", ""),
+            "jdmr_nazwa":      p.payload.get("jdmr_nazwa", ""),
+            "score":           round(p.score, 4),
+            "_pomocniczy_vec": p.vector.get("pomocniczy") if p.vector else None,
         }
         for p in results.points
-    ]
+    ]    
 
     if rerank and candidates:
         reranker = _get_reranker()

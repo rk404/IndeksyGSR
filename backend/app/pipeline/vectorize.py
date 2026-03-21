@@ -135,7 +135,7 @@ def build_text(
     komb_id_raw = row.get("KOMB_ID")
     if pd.notna(komb_id_raw):
         komb_id = int(komb_id_raw)
-        seg = segment_map.get(komb_id, {})
+        seg = segment_map.get(komb_id, {}) if pd.notna(komb_id_raw) else {}
         for pos in [1, 2, 3]:
             val = seg.get(pos)
             if val:
@@ -172,14 +172,18 @@ def ensure_collection(client: QdrantClient, recreate: bool) -> None:
         client.delete_collection(COLLECTION_NAME)
         exists = False
     if not exists:
-        log.info("Tworzę kolekcję '%s' (dense 1024 + sparse)...", COLLECTION_NAME)
+        log.info("Tworzę kolekcję '%s' (dense 1024 + sparse + pomocniczy)...", COLLECTION_NAME)
         client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config={
                 "dense": models.VectorParams(
                     size=DENSE_SIZE,
                     distance=models.Distance.COSINE,
-                )
+                ),
+                "pomocniczy": models.VectorParams(
+                    size=DENSE_SIZE,
+                    distance=models.Distance.COSINE,
+                ),
             },
             sparse_vectors_config={
                 "sparse": models.SparseVectorParams()
@@ -205,10 +209,11 @@ def upload_batch(
     rows_batch: list[pd.Series],
     dense_vecs: list,
     lexical_weights: list,
+    pomocniczy_vecs: list,
     segment_map: dict[int, dict[int, str]],
 ) -> None:
     points = []
-    for i, (row, dense, lex) in enumerate(zip(rows_batch, dense_vecs, lexical_weights)):
+    for i, (row, dense, lex, pomocniczy) in enumerate(zip(rows_batch, dense_vecs, lexical_weights, pomocniczy_vecs)):
         indeks = str(row.get("INDEKS", "")).strip()
         komb_id_raw = row.get("KOMB_ID")
         seg = segment_map.get(int(komb_id_raw), {}) if pd.notna(komb_id_raw) else {}
@@ -218,6 +223,7 @@ def upload_batch(
                 vector={
                     "dense": dense.tolist(),
                     "sparse": lexical_to_sparse(lex),
+                    "pomocniczy": pomocniczy.tolist(),  # ← zamiast [0.0] * DENSE_SIZE
                 },
                 payload={
                     "indeks": indeks,
@@ -262,7 +268,10 @@ def run(args: argparse.Namespace) -> None:
         build_text(row, segment_map, scrape_map)
         for _, row in baza_df.iterrows()
     ]
-
+    texts_pomocniczy = [
+        str(row.get("NAZWA", "")).strip()
+        for _, row in baza_df.iterrows()
+    ]
     # 3. Klient embedding service (model załadowany w serwisie, nie tutaj)
     log.info("Łączenie z embedding service (http://localhost:8080)...")
     model = EmbeddingModel()
@@ -296,7 +305,14 @@ def run(args: argparse.Namespace) -> None:
         )
         dense_vecs = output["dense_vecs"]
         lexical_weights = output["lexical_weights"]
-
+        batch_pomocniczy_texts = texts_pomocniczy[start:end]
+        output_pomocniczy = model.encode(
+            batch_pomocniczy_texts,
+            return_dense=True,
+            return_sparse=False,
+            return_colbert_vecs=False,
+        )
+        pomocniczy_vecs = output_pomocniczy["dense_vecs"]
         if not args.dry_run:
             # Upload do Qdrant partiami po QDRANT_UPLOAD_BATCH
             for up_start in range(0, len(batch_rows), QDRANT_UPLOAD_BATCH):
@@ -307,6 +323,7 @@ def run(args: argparse.Namespace) -> None:
                     rows_batch=batch_rows[up_start:up_end],
                     dense_vecs=dense_vecs[up_start:up_end],
                     lexical_weights=lexical_weights[up_start:up_end],
+                    pomocniczy_vecs=pomocniczy_vecs[up_start:up_end],
                     segment_map=segment_map,
                 )
 

@@ -37,7 +37,7 @@ except Exception:
 import pandas as pd
 import streamlit as st
 
-from app.core.search import search as _qdrant_search, get_model, get_reranker
+from app.core.search import search as _qdrant_search, get_model, get_reranker, normalize_query
 
 # ──────────────────────────────────────────────
 # Konfiguracja
@@ -622,7 +622,32 @@ def _suggest_new_index(query: str, results: list[dict]) -> None:
         else:
             st.warning("Brak połączenia z Firestore — propozycja nie została zapisana.")
 
+def _update_pomocniczy_vector(query: str, sel_results: list[dict]) -> None:
+    """Aktualizuje wektor 'pomocniczy' w Qdrant dla zaznaczonych indeksów — treść = query użytkownika."""
+    qdrant = _get_qdrant()
+    if qdrant is None:
+        return
+    model = get_search_model()
+    output = model.encode(
+        [query],
+        return_dense=True,
+        return_sparse=False,
+        return_colbert_vecs=False,
+    )
+    vec = output["dense_vecs"][0].tolist()
 
+    from qdrant_client import models as qmodels
+    points = [
+        qmodels.PointVectors(
+            id=r["qdrant_id"],
+            vector={"pomocniczy": vec},
+        )
+        for r in sel_results
+        if r.get("qdrant_id") is not None
+    ]
+    if points:
+        qdrant.update_vectors(collection_name="indeksy", points=points)
+        
 def view_search():
     st.markdown("## 🔍 Wyszukiwanie semantyczne indeksów")
 
@@ -698,6 +723,7 @@ def view_search():
                     db.collection("search_selections").add({
                         "query": query,
                         "source": "text",
+                        "qdrant_id": r.get("qdrant_id"),        # ← dodaj
                         "indeks": r["indeks"],
                         "nazwa": r["nazwa"],
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
@@ -705,6 +731,10 @@ def view_search():
                         "saved_at": datetime.utcnow().isoformat(),
                     })
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
+                try:
+                    _update_pomocniczy_vector(query, sel_results)
+                except Exception as e:
+                    st.warning(f"Zapis do Firestore OK, ale aktualizacja wektora pomocniczego nie powiodła się: {e}")
             else:
                 st.warning("Brak połączenia z Firestore.")
 
@@ -911,7 +941,7 @@ def _upsert_proposed_to_qdrant(doc_id: str, proposal: dict) -> None:
         points=[
             qmodels.PointStruct(
                 id=point_id,
-                vector={"dense": dense, "sparse": sparse},
+                vector={"dense": dense, "sparse": sparse, "pomocniczy": [0.0] * 1024},
                 payload={
                     "indeks": f"PROP-{doc_id[:8].upper()}",
                     "nazwa": nazwa,
@@ -1111,6 +1141,7 @@ def view_search_by_url():
                         "query": query,
                         "source": "url",
                         "source_url": url,
+                        "qdrant_id": r.get("qdrant_id"),   # ← dodaj tę linię
                         "indeks": r["indeks"],
                         "nazwa": r["nazwa"],
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
@@ -1118,6 +1149,10 @@ def view_search_by_url():
                         "saved_at": datetime.utcnow().isoformat(),
                     })
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
+                try:
+                    _update_pomocniczy_vector(query, sel_results)
+                except Exception as e:
+                    st.warning(f"Zapis do Firestore OK, ale aktualizacja wektora pomocniczego nie powiodła się: {e}")
             else:
                 st.warning("Brak połączenia z Firestore.")
 
@@ -1150,6 +1185,9 @@ def main():
     st.sidebar.markdown("---")
     if st.sidebar.button("🔄 Odśwież dane"):
         st.cache_data.clear()
+        for key in list(st.session_state.keys()):
+            if key.startswith("_search_results_"):
+                del st.session_state[key]
         st.rerun()
 
     if view == "📧 Maile":
