@@ -676,25 +676,6 @@ def view_search():
         st.info("Wpisz opis produktu aby wyszukać pasujące indeksy materiałowe.")
         return
 
-    
-    output = model.encode(
-        [QUERY_INSTRUCTION + query],
-        return_dense=True,
-        return_sparse=True,
-        return_colbert_vecs=False,
-    )
-    query_dense = output["dense_vecs"][0].tolist()
-    query_sparse = _lexical_to_sparse(output["lexical_weights"][0])
-
-    # Osobne enkodowanie dla wektora pomocniczy (bez instrukcji — tak jak był zapisany)
-    output_pom = model.encode(
-        [query],
-        return_dense=True,
-        return_sparse=False,
-        return_colbert_vecs=False,
-    )
-    query_pomocniczy = output_pom["dense_vecs"][0].tolist()
-
     spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie..."
     _cache_key = f"_search_results_{query}_{top_k}_{use_reranker}"
     if _cache_key not in st.session_state:
