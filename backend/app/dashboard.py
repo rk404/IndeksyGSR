@@ -6,20 +6,11 @@ Uruchomienie:
 """
 
 import asyncio
+import sys
 import html as html_module
 import os
 import random
-import sys
-import json
-
-import platform
-import subprocess
-
-from playwright.sync_api import ViewportSize
-
-from app.pipeline.enums import BotSecuredPages
-from app.pipeline.scrape import human_delay
-from app.pipeline.scrape import human_scroll
+import time
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -44,6 +35,7 @@ from app.core.search import search as _qdrant_search, get_model, get_reranker, n
 # ──────────────────────────────────────────────
 COLLECTION = "emails"
 PRODUCTS_COLLECTION = "product_scrapes"
+PRODUCTS_COLLECTION_BS = "product_scrapes_beautifulsoup"
 GCS_BUCKET_NAME = "projekt-email-attachments"
 
 st.set_page_config(
@@ -192,10 +184,11 @@ def load_emails() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
-def load_products() -> pd.DataFrame:
+def load_products(collection: str = PRODUCTS_COLLECTION) -> pd.DataFrame:
+    """Załaduj produkty z wybranej kolekcji (Playwright lub BeautifulSoup)."""
     db = get_db()
     rows = []
-    for doc in db.collection(PRODUCTS_COLLECTION).stream():
+    for doc in db.collection(collection).stream():
         d = doc.to_dict()
         rows.append({
             "indeks":         doc.id,
@@ -421,16 +414,126 @@ def product_detail(row: pd.Series):
 
 
 def view_products():
-    df = load_products()
-    if df.empty:
-        st.warning("Brak danych scrapowanych. Uruchom najpierw `python scrape.py`.")
-        return
-
-    # Filtry w sidebarze
+    """Zakładka do przeglądania wyników scrapingu produktów."""
+    
+    # ─── WYBÓR ŹRÓDŁA DANYCH ───
+    st.markdown("### 📊 Widok Produktów")
+    
+    data_source = st.radio(
+        "Źródło danych:",
+        ["🎭 Playwright", "⚡ BeautifulSoup", "📋 Porównanie"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="product_data_source"
+    )
+    
+    st.markdown("---")
+    # ─── NORMALNY WIDOK PRODUKTÓW ───
     st.sidebar.markdown("---")
-    search = st.sidebar.text_input("🔍 Szukaj (indeks / nazwa)", "")
-    only_specs = st.sidebar.checkbox("Tylko z specyfikacjami")
-    only_ok = st.sidebar.checkbox("Tylko poprawnie zescrapowane", value=True)
+    st.sidebar.markdown("### 🔍 Filtry")
+    
+    # Załaduj dane z wybranego źródła
+    if data_source == "🎭 Playwright":
+        df = load_products(PRODUCTS_COLLECTION)
+        source_label = "🎭 Playwright"
+    elif data_source == "⚡ BeautifulSoup":
+        df = load_products(PRODUCTS_COLLECTION_BS)
+        source_label = "⚡ BeautifulSoup"
+    else:  # Porównanie
+        df_pw = load_products(PRODUCTS_COLLECTION)
+        df_bs = load_products(PRODUCTS_COLLECTION_BS)
+        
+        st.subheader("📊 Porównanie Metod Scrapingu")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🎭 Playwright", len(df_pw))
+        with col2:
+            st.metric("⚡ BeautifulSoup", len(df_bs))
+        with col3:
+            common = len(set(df_pw["indeks"]) & set(df_bs["indeks"]))
+            st.metric("🔗 Wspólne", common)
+        
+        st.markdown("---")
+        
+        # Tabs do porównania
+        tab_pw, tab_bs = st.tabs(["🎭 Playwright", "⚡ BeautifulSoup"])
+        
+        with tab_pw:
+            st.markdown(f"### {len(df_pw)} produktów (Playwright)")
+            
+            search_pw = st.sidebar.text_input("🔍 Szukaj (PW)", "", key="prod_search_pw")
+            only_specs_pw = st.sidebar.checkbox("Spec. (PW)", value=False, key="prod_specs_pw")
+            only_ok_pw = st.sidebar.checkbox("OK (PW)", value=True, key="prod_ok_pw")
+            
+            df_pw_f = df_pw.copy()
+            if only_ok_pw:
+                df_pw_f = df_pw_f[df_pw_f["status"] == "ok"]
+            if only_specs_pw:
+                df_pw_f = df_pw_f[df_pw_f["has_specs"]]
+            if search_pw:
+                mask = (
+                    df_pw_f["indeks"].str.contains(search_pw, case=False, na=False)
+                    | df_pw_f["nazwa"].str.contains(search_pw, case=False, na=False)
+                    | df_pw_f["title"].str.contains(search_pw, case=False, na=False)
+                )
+                df_pw_f = df_pw_f[mask]
+            
+            ok_count_pw = (df_pw["status"] == "ok").sum()
+            err_count_pw = (df_pw["status"] == "error").sum()
+            spec_count_pw = df_pw["has_specs"].sum()
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("📦 Produkty", len(df_pw_f), delta=f"z {len(df_pw)} łącznie" if len(df_pw_f) != len(df_pw) else None)
+            m2.metric("✅ Poprawnie", ok_count_pw)
+            m3.metric("❌ Błędy", err_count_pw)
+            m4.metric("⚙️ Ze spec.", spec_count_pw)
+            st.markdown("---")
+            
+            _product_list(df_pw_f)
+        
+        with tab_bs:
+            st.markdown(f"### {len(df_bs)} produktów (BeautifulSoup)")
+            
+            search_bs = st.sidebar.text_input("🔍 Szukaj (BS)", "", key="prod_search_bs")
+            only_specs_bs = st.sidebar.checkbox("Spec. (BS)", value=False, key="prod_specs_bs")
+            only_ok_bs = st.sidebar.checkbox("OK (BS)", value=True, key="prod_ok_bs")
+            
+            df_bs_f = df_bs.copy()
+            if only_ok_bs:
+                df_bs_f = df_bs_f[df_bs_f["status"] == "ok"]
+            if only_specs_bs:
+                df_bs_f = df_bs_f[df_bs_f["has_specs"]]
+            if search_bs:
+                mask = (
+                    df_bs_f["indeks"].str.contains(search_bs, case=False, na=False)
+                    | df_bs_f["nazwa"].str.contains(search_bs, case=False, na=False)
+                    | df_bs_f["title"].str.contains(search_bs, case=False, na=False)
+                )
+                df_bs_f = df_bs_f[mask]
+            
+            ok_count_bs = (df_bs["status"] == "ok").sum()
+            err_count_bs = (df_bs["status"] == "error").sum()
+            spec_count_bs = df_bs["has_specs"].sum()
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("📦 Produkty", len(df_bs_f), delta=f"z {len(df_bs)} łącznie" if len(df_bs_f) != len(df_bs) else None)
+            m2.metric("✅ Poprawnie", ok_count_bs)
+            m3.metric("❌ Błędy", err_count_bs)
+            m4.metric("⚙️ Ze spec.", spec_count_bs)
+            st.markdown("---")
+            
+            _product_list(df_bs_f)
+        
+        return
+    
+    if df.empty:
+        st.info(f"Brak danych ({source_label}). Konfiguruj scraping w sekcji powyżej.")
+        return
+    
+    search = st.sidebar.text_input("🔍 Szukaj", "", key="prod_search")
+    only_specs = st.sidebar.checkbox("Spec.", value=False, key="prod_specs")
+    only_ok = st.sidebar.checkbox("OK", value=True, key="prod_ok")
 
     df_f = df.copy()
     if only_ok:
@@ -679,15 +782,12 @@ def view_search():
         return
 
     spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie..."
-    _cache_key = f"_search_results_{query}_{top_k}_{use_reranker}"
-    if _cache_key not in st.session_state:
-        with st.spinner(spinner_msg):
-            try:
-                st.session_state[_cache_key] = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
-            except Exception as e:
-                st.error(f"Błąd wyszukiwania: {e}")
-                return
-    results = st.session_state[_cache_key]
+    with st.spinner(spinner_msg):
+        try:
+            results = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
+        except Exception as e:
+            st.error(f"Błąd wyszukiwania: {e}")
+            return
 
     if not results:
         st.warning("Brak wyników. Sprawdź czy kolekcja Qdrant jest zwektoryzowana (`python vectorize.py`).")
@@ -698,9 +798,7 @@ def view_search():
 
     for i, r in enumerate(results, 1):
         score_pct = min(int(r["score"] * 100), 100)
-        c0, c1, c2 = st.columns([1, 8, 2])
-        with c0:
-            st.checkbox("", key=f"sel_search_{r['indeks']}", label_visibility="collapsed")
+        c1, c2 = st.columns([9, 2])
         with c1:
             st.markdown(
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
@@ -711,7 +809,7 @@ def view_search():
                 unsafe_allow_html=True,
             )
         with c2:
-            st.progress(score_pct, text=f"score: {r['score']:.2f}")
+            st.progress(score_pct, text=f"score: {r['score']}")
         st.divider()
 
     sel_results = [r for r in results if st.session_state.get(f"sel_search_{r['indeks']}")]
@@ -740,15 +838,15 @@ def view_search():
 
     st.markdown("---")
     if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
-        st.session_state["url_suggest_mode"] = True
-        st.session_state["url_suggest_query"] = query
-        st.session_state["url_suggest_results"] = results
+        st.session_state["suggest_mode"] = True
+        st.session_state["suggest_query"] = query
+        st.session_state["suggest_results"] = results
 
     if (
-        st.session_state.get("url_suggest_mode")
-        and st.session_state.get("url_suggest_query") == query
+        st.session_state.get("suggest_mode")
+        and st.session_state.get("suggest_query") == query
     ):
-        _suggest_new_index(query, st.session_state.get("url_suggest_results", []))
+        _suggest_new_index(query, st.session_state.get("suggest_results", []))
 
 
 # ──────────────────────────────────────────────
@@ -756,11 +854,10 @@ def view_search():
 # ──────────────────────────────────────────────
 
 _USER_AGENTS = [
-    # "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    # "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    # "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-    # "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
 ]
 
 
@@ -769,24 +866,16 @@ async def _async_scrape_url(url: str) -> dict:
     from app.core.extractors import extract  # noqa: PLC0415
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        ctx = await browser.new_context(viewport=ViewportSize({"width": 1400, "height": 900}), locale="pl-PL")
+        browser = await pw.chromium.launch(headless=True)
+        ctx = await browser.new_context(viewport={"width": 1280, "height": 800}, locale="pl-PL")
         page = await ctx.new_page()
-
         await page.set_extra_http_headers({
             "User-Agent": random.choice(_USER_AGENTS),
             "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
         })
-
         try:
-            hide_browser_window()
-            await page.goto(url, timeout=20_000, wait_until="load")
-
-            if any(securedPage in url for securedPage in BotSecuredPages):
-                await human_delay()
-                await human_scroll(page)
-
-            # await page.wait_for_timeout(2000)
+            await page.goto(url, timeout=30_000, wait_until="load")
+            await page.wait_for_timeout(2000)
             extracted = await extract(page, url)
             if not extracted.get("title") and not extracted.get("description"):
                 body = await page.evaluate("() => document.body?.innerText || ''")
@@ -796,100 +885,9 @@ async def _async_scrape_url(url: str) -> dict:
             await browser.close()
     return extracted
 
-def hide_browser_window():
-    system = platform.system()
-
-    try:
-        if system == "Linux":
-            # wymaga: sudo apt install xdotool
-            result = subprocess.check_output(
-                ["xdotool", "search", "--onlyvisible", "--class", "Chromium"]
-            )
-            window_ids = result.decode().split()
-
-            for wid in window_ids:
-                subprocess.call(["xdotool", "windowminimize", wid])
-                # lub:
-                # subprocess.call(["xdotool", "windowmove", wid, "-2000", "-2000"])
-
-        elif system == "Windows":
-            import win32gui
-            import win32con
-
-            def callback(hwnd, _):
-                title = win32gui.GetWindowText(hwnd)
-                if "Chrome" in title or "Chromium" in title:
-                    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
-
-            win32gui.EnumWindows(callback, None)
-
-        elif system == "Darwin":  # macOS
-            # AppleScript – minimalizuje wszystkie okna Chrome
-            script = """
-            tell application "Google Chrome"
-                repeat with w in windows
-                    set miniaturized of w to true
-                end repeat
-            end tell
-            """
-            subprocess.call(["osascript", "-e", script])
-
-    except Exception as e:
-        print(f"[WARN] Nie udało się ukryć okna: {e}")
-
 
 def _scrape_url(url: str) -> dict:
-    """Wrapper that runs async scraping in isolated subprocess to avoid asyncio issues on Windows."""
-    code = f"""
-import asyncio
-from app.core.extractors import extract
-from playwright.async_api import async_playwright
-import random
-
-async def scrape():
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
-    ]
-    
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(viewport={{"width": 1280, "height": 800}}, locale="pl-PL")
-        page = await ctx.new_page()
-        await page.set_extra_http_headers({{
-            "User-Agent": random.choice(user_agents),
-            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
-        }})
-        extracted = {{"title": "", "description": "", "specifications": {{}}, "price": ""}}
-        try:
-            await page.goto("{url}", wait_until="networkidle", timeout=30000)
-            extracted = await extract(page, "{url}")
-        except Exception as e:
-            extracted["error"] = str(e)
-        finally:
-            await browser.close()
-        return extracted
-
-result = asyncio.run(scrape())
-import json
-print(json.dumps(result))
-"""
-    
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if proc.returncode == 0:
-            return json.loads(proc.stdout.strip())
-        else:
-            return {"error": f"Subprocess error: {proc.stderr}"}
-    except subprocess.TimeoutExpired:
-        return {"error": "Scraping timeout"}
-    except Exception as e:
-        return {"error": str(e)}
+    return asyncio.run(_async_scrape_url(url))
 
 
 def _build_query_from_scraped(data: dict) -> str:
@@ -1096,15 +1094,12 @@ def view_search_by_url():
         return
 
     spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie w Qdrant..."
-    _cache_key = f"_search_results_{query}_{top_k}_{use_reranker}"
-    if _cache_key not in st.session_state:
-        with st.spinner(spinner_msg):
-            try:
-                st.session_state[_cache_key] = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
-            except Exception as e:
-                st.error(f"Błąd wyszukiwania: {e}")
-                return
-    results = st.session_state[_cache_key]
+    with st.spinner(spinner_msg):
+        try:
+            results = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
+        except Exception as e:
+            st.error(f"Błąd wyszukiwania: {e}")
+            return
 
     if not results:
         st.warning("Brak wyników.")
@@ -1115,9 +1110,7 @@ def view_search_by_url():
 
     for i, r in enumerate(results, 1):
         score_pct = min(int(r["score"] * 100), 100)
-        c0, c1, c2 = st.columns([1, 8, 2])
-        with c0:
-            st.checkbox("", key=f"sel_url_{r['indeks']}", label_visibility="collapsed")
+        c1, c2 = st.columns([9, 2])
         with c1:
             st.markdown(
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
@@ -1128,7 +1121,7 @@ def view_search_by_url():
                 unsafe_allow_html=True,
             )
         with c2:
-            st.progress(score_pct, text=f"score: {r['score']:.2f}")
+            st.progress(score_pct, text=f"score: {r['score']}")
         st.divider()
 
     sel_results = [r for r in results if st.session_state.get(f"sel_url_{r['indeks']}")]
@@ -1157,7 +1150,7 @@ def view_search_by_url():
                 st.warning("Brak połączenia z Firestore.")
 
     st.markdown("---")
-    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
+    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="url_suggest_btn"):
         st.session_state["url_suggest_mode"] = True
         st.session_state["url_suggest_query"] = query
         st.session_state["url_suggest_results"] = results
