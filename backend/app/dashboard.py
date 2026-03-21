@@ -35,7 +35,7 @@ except RuntimeError:
 import pandas as pd
 import streamlit as st
 
-from app.core.search import search as _qdrant_search, get_model, get_reranker
+from app.core.search import search as _qdrant_search, get_model, get_reranker, normalize_query
 
 # ──────────────────────────────────────────────
 # Konfiguracja
