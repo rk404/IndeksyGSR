@@ -26,6 +26,19 @@ Opis powinien być zwięzły (3–5 zdań), techniczny, po polsku.
 Zawieraj: zastosowanie, materiał, parametry techniczne (wymiary, normy, klasy), środowisko pracy.
 Nie wymyślaj danych — opieraj się wyłącznie na dostarczonych informacjach."""
 
+_CLASSIFIER_SYSTEM_PROMPT = """Jesteś klasyfikatorem tekstu.
+
+Twoim zadaniem jest ocenić, czy podany tekst:
+1. Jest rzeczywistym opisem produktu
+2. NIE jest polityką cookies, RODO, regulaminem ani komunikatem strony
+
+Weź pod uwagę tytuł produktu.
+
+Zwróć TYLKO jedno słowo:
+True - jeśli to poprawny opis produktu
+False - jeśli to cookies / regulamin / śmieci / niepowiązany tekst
+
+Nie dodawaj nic więcej."""
 
 def _build_prompt(scraped: dict, nazwa: str = "", indeks: str = "") -> str:
     parts = []
@@ -85,3 +98,51 @@ def generate_index_description(
         return f"BŁĄD: Groq API {e.response.status_code} — {e.response.text[:200]}"
     except Exception as e:
         return f"BŁĄD: {e}"
+
+def is_valid_product_description(
+    description: str,
+    title: str,
+    model: str | None = None,
+) -> bool:
+    """ Sprawdza czy description jest opisem produktu a nie jest polityką cookies """
+
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return True
+    if not description.strip():
+        return False
+
+    used_model = model or os.getenv("GROQ_MODEL", _DEFAULT_MODEL)
+    prompt = f"""Tytuł produktu:
+{title}
+
+Tekst do oceny:
+{description[:1500]}
+
+Czy to jest poprawny opis produktu zgodny z tytułem?"""
+
+    try:
+        resp = httpx.post(
+            _API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": used_model,
+                "messages": [
+                    {"role": "system", "content": _CLASSIFIER_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.0,  # deterministycznie
+                "max_tokens": 5,
+            },
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+
+        answer = resp.json()["choices"][0]["message"]["content"].strip().upper()
+        return answer.startswith("True")
+
+    except Exception:
+        return True
