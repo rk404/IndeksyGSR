@@ -23,7 +23,7 @@ Firestore           Cloud      Firestore         Cloud         Qdrant     embed-
                                            │
                                            ▼
                                      dashboard.py (Streamlit)
-                     📧 Maile │ 📦 Produkty │ 🔍 Wyszukiwanie │ 🌐 Wyszukiwanie po URL
+            📧 Maile │ 📦 Produkty │ 🔍 Wyszukiwanie │ 🌐 Wyszukiwanie po URL │ 📝 Propozycje
 ```
 
 ---
@@ -41,22 +41,26 @@ IndeksyGSR/
 ├── backend/
 │   ├── app/
 │   │   ├── core/
-│   │   │   ├── search.py       # wyszukiwanie semantyczne (hybrid RRF)
-│   │   │   ├── suggest.py      # auto-sugestia segmentów dla nowych indeksów
-│   │   │   └── extractors.py   # parsery DOM per domena
+│   │   │   ├── search.py            # wyszukiwanie semantyczne (hybrid RRF)
+│   │   │   ├── suggest.py           # auto-sugestia segmentów dla nowych indeksów
+│   │   │   ├── extractors.py        # parsery DOM per domena
+│   │   │   └── search_selection.py  # zapis wyborów użytkownika do Firestore
 │   │   ├── pipeline/
 │   │   │   ├── parse_email.py  # parser .pst → Firestore + GCS
 │   │   │   ├── scrape.py       # web scraper → Firestore
-│   │   │   └── vectorize.py    # BGE-M3 → Qdrant Cloud
+│   │   │   ├── vectorize.py    # BGE-M3 → Qdrant Cloud
+│   │   │   └── enums.py        # enumeracje
 │   │   ├── services/
 │   │   │   ├── embedding_service.py  # FastAPI serwis modeli (BGE-M3 + reranker)
 │   │   │   ├── embedding_client.py   # klient HTTP do embedding_service
-│   │   │   ├── firestore.py    # klient Firestore
-│   │   │   ├── gcs.py          # klient Cloud Storage
-│   │   │   ├── gdrive.py       # klient Google Drive
-│   │   │   └── qdrant.py       # klient Qdrant Cloud
+│   │   │   ├── firestore.py          # klient Firestore
+│   │   │   ├── gcs.py                # klient Cloud Storage
+│   │   │   ├── gdrive.py             # klient Google Drive
+│   │   │   ├── qdrant.py             # klient Qdrant Cloud
+│   │   │   └── groq_client.py        # klient Groq LLM API (eksperymentalny)
 │   │   ├── dashboard.py        # Streamlit UI
-│   │   └── main.py             # FastAPI (placeholder)
+│   │   ├── main.py             # FastAPI (placeholder)
+│   │   └── routers/            # API routery (placeholder)
 │   ├── data/                   # pliki CSV i PST (pobierane z Drive, nie w repo)
 │   ├── .env                    # klucze API — nie commitować!
 │   └── service_account.json    # klucz GCP — nie commitować!
@@ -203,6 +207,8 @@ Utwórz plik `backend/.env`:
 QDRANT_URL=https://<twoj-klaster>.qdrant.io
 QDRANT_API_KEY=<twoj-klucz>
 EMBEDDING_SERVICE_URL=http://localhost:8080   # opcjonalne, domyślnie localhost:8080
+GROQ_API_KEY=<twoj-klucz-groq>               # eksperymentalny klient LLM
+GROQ_MODEL=llama-3.3-70b-versatile           # domyślny model Groq
 ```
 
 > [!IMPORTANT]
