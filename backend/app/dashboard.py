@@ -16,6 +16,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 from datetime import datetime, timedelta
 
+<<<<<<< HEAD
 # Apply nest_asyncio early to fix Windows asyncio subprocess issues
 try:
     import nest_asyncio
@@ -25,6 +26,8 @@ try:
 except Exception:
     pass
 
+=======
+>>>>>>> a34911dc7e04258d8a87736300cebdaacef147ef
 import pandas as pd
 import streamlit as st
 
@@ -812,6 +815,7 @@ def view_search():
             st.progress(score_pct, text=f"score: {r['score']}")
         st.divider()
 
+<<<<<<< HEAD
     sel_results = [r for r in results if st.session_state.get(f"sel_search_{r['indeks']}")]
     if sel_results:
         if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_search"):
@@ -836,6 +840,8 @@ def view_search():
             else:
                 st.warning("Brak połączenia z Firestore.")
 
+=======
+>>>>>>> a34911dc7e04258d8a87736300cebdaacef147ef
     st.markdown("---")
     if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
         st.session_state["suggest_mode"] = True
@@ -1124,6 +1130,7 @@ def view_search_by_url():
             st.progress(score_pct, text=f"score: {r['score']}")
         st.divider()
 
+<<<<<<< HEAD
     sel_results = [r for r in results if st.session_state.get(f"sel_url_{r['indeks']}")]
     if sel_results:
         if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_url"):
@@ -1149,6 +1156,8 @@ def view_search_by_url():
             else:
                 st.warning("Brak połączenia z Firestore.")
 
+=======
+>>>>>>> a34911dc7e04258d8a87736300cebdaacef147ef
     st.markdown("---")
     if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="url_suggest_btn"):
         st.session_state["url_suggest_mode"] = True
