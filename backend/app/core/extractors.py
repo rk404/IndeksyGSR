@@ -5,6 +5,7 @@ extractors.py — Ekstrakcja tytułu, opisu i specyfikacji ze stron produktowych
 from __future__ import annotations
 import re
 from urllib.parse import urlparse
+from app.services.groq_client import is_valid_product_description
 
 # ──────────────────────────────────────────────
 # Helpers
@@ -125,8 +126,8 @@ async def _dl_specs(page) -> dict[str, str]:
     return specs
 
 
-async def _best_description(page) -> str:
-    """Zwraca najlepszy opis ze strony."""
+async def _best_description(page, title) -> str:
+    """ Zwraca najlepszy opis ze strony, potwierdzony przez LLM (że nie jest polityką cookies) """
     candidates = [
         "[itemprop='description']",
         ".product-description", ".product-desc",
@@ -148,22 +149,49 @@ async def _best_description(page) -> str:
         ]
         return any(k in t_low for k in keywords)
 
-    best = ""
+    collected: list[str] = []
+
     for sel in candidates:
         try:
             els = await page.query_selector_all(sel)
             for el in els:
                 t = _clean(await el.inner_text())
-                # Pomija tekst kory jest polityka cookie
+
                 if _is_cookie_text(t):
                     continue
 
-                # Odrzuć zbyt krótkie i zbyt długie (prawdop. cała strona)
-                if 50 < len(t) < 5000 and len(t) > len(best):
-                    best = t
+                if 50 < len(t) < 5000:
+                    collected.append(t)
         except Exception:
             pass
-    return best[:3000]
+
+    if not collected:
+        return ""
+
+    # najdłuższy pierwszy
+    collected.sort(key=len, reverse=True)
+    collected = [t[:3000] for t in collected]
+    collected = list(dict.fromkeys(collected))
+
+    return await confirm_description_with_llm(collected, title)
+
+async def _probe_with_llm(description: str, title: str) -> bool:
+    return is_valid_product_description(description, title)
+
+async def confirm_description_with_llm(descriptions: list[str], title) -> str:
+    """ Iteruje po kandydatach i wybiera pierwszy poprawny wg LLM. Jesli LLM nie jest dostepny zwraca pierwszy """
+    if not descriptions:
+        return ""
+
+    try:
+        for desc in descriptions:
+            ok = await _probe_with_llm(desc, title)
+            if ok:
+                return desc
+        return descriptions[0]
+
+    except Exception:
+        return descriptions[0]
 
 
 # ──────────────────────────────────────────────
@@ -202,7 +230,7 @@ async def extract_allegro(page) -> dict:
     # Opis
     desc = await _text(page, "[data-box-name='Description'], [data-testid='description']")
     if not desc:
-        desc = await _best_description(page)
+        desc = await _best_description(page, result["title"])
     result["description"] = desc[:3000]
 
     return result
@@ -259,7 +287,7 @@ async def extract_tme(page) -> dict:
 
     result["description"] = await _text(
         page, ".product-description, #description, .description-content"
-    ) or await _best_description(page)
+    ) or await _best_description(page, result["title"])
     return result
 
 
@@ -315,7 +343,7 @@ async def extract_generic(page) -> dict:
 
     result["specifications"] = specs
 
-    result["description"] = await _best_description(page)
+    result["description"] = await _best_description(page, result["title"])
     if not result["description"]:
         # Ostateczny fallback: tekst body
         try:

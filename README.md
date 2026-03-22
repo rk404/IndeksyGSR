@@ -82,11 +82,52 @@ Skrypt automatycznie:
 3. pobiera przeglądarkę Chromium dla Playwright
 4. pobiera modele HuggingFace: `BAAI/bge-m3` (~570 MB) i `BAAI/bge-reranker-v2-m3` (~1.1 GB)
 
+### Dodatkowe pakiety
+#### Linux
 Ponadto dla systemu Linux wymagana jest instalacja xdotool
 
 ```bash
 sudo apt install xdotool
 ```
+
+#### macOS
+Dla macOS wymagany jest yabai:
+```bash
+brew tap koekeishiya/formulae
+brew install yabai
+```
+Nadanie uprawnień:
+Otwórz System Settings → Privacy & Security → Accessibility i nadaj uprawnienia yabai.
+
+Start usługi przy starcie systemu:
+1. Utwórz plik w ~/Library/LaunchAgents, np. com.koekeishiya.yabai.plist:
+```
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.koekeishiya.yabai</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/yabai</string>
+        <string>--start-service</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+2. launchctl load ~/Library/LaunchAgents/com.koekeishiya.yabai.plist
+3. Restart po zmianach:
+```
+launchctl unload ~/Library/LaunchAgents/com.koekeishiya.yabai.plist
+launchctl load ~/Library/LaunchAgents/com.koekeishiya.yabai.plist
+```
+
 
 ### Obsługa plików `.pst` (parse-email)
 
