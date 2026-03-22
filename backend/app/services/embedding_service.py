@@ -46,7 +46,7 @@ def encode(req: EncodeRequest):
 @app.post("/rerank")
 def rerank(req: RerankRequest):
     scores = _reranker.compute_score(
-        [(req.query, p) for p in req.passages], normalize=True
+        [(req.query, p) for p in req.passages], normalize=False
     )
     if hasattr(scores, "tolist"):
         scores = scores.tolist()

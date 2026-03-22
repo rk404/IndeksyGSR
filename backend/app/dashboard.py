@@ -6,11 +6,20 @@ Uruchomienie:
 """
 
 import asyncio
-import sys
 import html as html_module
 import os
 import random
-import time
+import sys
+import json
+
+import platform
+import subprocess
+
+from playwright.sync_api import ViewportSize
+
+from app.pipeline.enums import BotSecuredPages
+from app.pipeline.scrape import human_delay
+from app.pipeline.scrape import human_scroll
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -528,12 +537,14 @@ def view_products():
         return
     
     if df.empty:
-        st.info(f"Brak danych ({source_label}). Konfiguruj scraping w sekcji powyżej.")
+        st.warning(f"Brak danych ({source_label}). Konfiguruj scraping w sekcji powyżej.")
         return
-    
-    search = st.sidebar.text_input("🔍 Szukaj", "", key="prod_search")
-    only_specs = st.sidebar.checkbox("Spec.", value=False, key="prod_specs")
-    only_ok = st.sidebar.checkbox("OK", value=True, key="prod_ok")
+
+    # Filtry w sidebarze
+    st.sidebar.markdown("---")
+    search = st.sidebar.text_input("🔍 Szukaj (indeks / nazwa)", "")
+    only_specs = st.sidebar.checkbox("Tylko z specyfikacjami")
+    only_ok = st.sidebar.checkbox("Tylko poprawnie zescrapowane", value=True)
 
     df_f = df.copy()
     if only_ok:
@@ -782,12 +793,15 @@ def view_search():
         return
 
     spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie..."
-    with st.spinner(spinner_msg):
-        try:
-            results = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
-        except Exception as e:
-            st.error(f"Błąd wyszukiwania: {e}")
-            return
+    _cache_key = f"_search_results_url_{query}_{top_k}_{use_reranker}"
+    if _cache_key not in st.session_state:
+        with st.spinner(spinner_msg):
+            try:
+                st.session_state[_cache_key] = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
+            except Exception as e:
+                st.error(f"Błąd wyszukiwania: {e}")
+                return
+    results = st.session_state[_cache_key]
 
     if not results:
         st.warning("Brak wyników. Sprawdź czy kolekcja Qdrant jest zwektoryzowana (`python vectorize.py`).")
@@ -797,8 +811,10 @@ def view_search():
     st.markdown("---")
 
     for i, r in enumerate(results, 1):
-        score_pct = min(int(r["score"] * 100), 100)
-        c1, c2 = st.columns([9, 2])
+        score_pct = max(0, min(int(r["score"] * 100), 100))
+        c0, c1, c2 = st.columns([1, 8, 2])
+        with c0:
+            st.checkbox("", key=f"sel_url_{r['indeks']}", label_visibility="collapsed")
         with c1:
             st.markdown(
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
@@ -809,28 +825,80 @@ def view_search():
                 unsafe_allow_html=True,
             )
         with c2:
-            st.progress(score_pct, text=f"score: {r['score']}")
+            st.progress(score_pct, text=f"score: {r['score']:.2f}")
         st.divider()
 
-    sel_results = [r for r in results if st.session_state.get(f"sel_search_{r['indeks']}")]
+
+    # ── Generowanie opisu przez LLM (Groq) — tylko dla jednego zaznaczonego ──
+    sel_results = [r for r in results if st.session_state.get(f"sel_url_{r['indeks']}")]
+
+    if len(sel_results) == 1:
+        groq_r = sel_results[0]
+        groq_cache_key = f"groq_desc_{groq_r['indeks']}"
+        with st.expander("✨ Generuj rozszerzony opis indeksu (Groq)", expanded=False):
+            col_llm1, col_llm2 = st.columns([3, 1])
+            with col_llm1:
+                groq_nazwa_s = st.text_input(
+                    "Nazwa indeksu (dla LLM)", value=groq_r["nazwa"], key=f"groq_nazwa_{groq_r['indeks']}"
+                )
+            with col_llm2:
+                groq_model_s = st.selectbox(
+                    "Model Groq",
+                    ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+                    key=f"groq_model_{groq_r['indeks']}",
+                )
+            if st.button("✨ Generuj opis", key=f"groq_describe_{groq_r['indeks']}"):
+                from app.services.groq_client import generate_index_description
+                scraped_for_groq = {
+                    "title": groq_nazwa_s,
+                    "description": query,
+                    "specifications": {},
+                }
+                with st.spinner("Generowanie opisu przez LLM..."):
+                    desc_s = generate_index_description(
+                        scraped_for_groq,
+                        nazwa=groq_nazwa_s,
+                        indeks=groq_r["indeks"],
+                        model=groq_model_s,
+                    )
+                st.session_state[groq_cache_key] = desc_s
+            if st.session_state.get(groq_cache_key):
+                desc_s = st.session_state[groq_cache_key]
+                if desc_s.startswith("BŁĄD:"):
+                    st.error(desc_s)
+                else:
+                    st.markdown("**Wygenerowany opis:**")
+                    st.info(desc_s)
+    elif len(sel_results) > 1:
+        groq_cache_key = ""
+    else:
+        groq_cache_key = ""
+
     if sel_results:
         if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_search"):
             db = get_db()
+            groq_desc_s = st.session_state.get(groq_cache_key, "")
+            if groq_desc_s.startswith("BŁĄD:"):
+                groq_desc_s = ""
             if db:
                 for r in sel_results:
-                    db.collection("search_selections").add({
+                    doc = {
                         "query": query,
                         "source": "text",
-                        "qdrant_id": r.get("qdrant_id"),        # ← dodaj
+                        "qdrant_id": r.get("qdrant_id"),
                         "indeks": r["indeks"],
                         "nazwa": r["nazwa"],
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
                         "score": float(r["score"]),
                         "saved_at": datetime.utcnow().isoformat(),
-                    })
+                    }
+                    if groq_desc_s:
+                        doc["groq_description"] = groq_desc_s
+                    db.collection("search_selections").add(doc)
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
                 try:
-                    _update_pomocniczy_vector(query, sel_results)
+                    pomocniczy_text = groq_desc_s if groq_desc_s else query
+                    _update_pomocniczy_vector(pomocniczy_text, sel_results)
                 except Exception as e:
                     st.warning(f"Zapis do Firestore OK, ale aktualizacja wektora pomocniczego nie powiodła się: {e}")
             else:
@@ -838,15 +906,15 @@ def view_search():
 
     st.markdown("---")
     if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
-        st.session_state["suggest_mode"] = True
-        st.session_state["suggest_query"] = query
-        st.session_state["suggest_results"] = results
+        st.session_state["url_suggest_mode"] = True
+        st.session_state["url_suggest_query"] = query
+        st.session_state["url_suggest_results"] = results
 
     if (
-        st.session_state.get("suggest_mode")
-        and st.session_state.get("suggest_query") == query
+        st.session_state.get("url_suggest_mode")
+        and st.session_state.get("url_suggest_query") == query
     ):
-        _suggest_new_index(query, st.session_state.get("suggest_results", []))
+        _suggest_new_index(query, st.session_state.get("url_suggest_results", []))
 
 
 # ──────────────────────────────────────────────
@@ -854,10 +922,11 @@ def view_search():
 # ──────────────────────────────────────────────
 
 _USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    # "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    # "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    # "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    # "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
+     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 ]
 
 
@@ -866,16 +935,25 @@ async def _async_scrape_url(url: str) -> dict:
     from app.core.extractors import extract  # noqa: PLC0415
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(viewport={"width": 1280, "height": 800}, locale="pl-PL")
+        browser = await pw.chromium.launch(headless=False)
+        ctx = await browser.new_context(viewport=ViewportSize({"width": 1400, "height": 900}), locale="pl-PL")
         page = await ctx.new_page()
+
         await page.set_extra_http_headers({
             "User-Agent": random.choice(_USER_AGENTS),
-            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
+            # "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
+            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8,pl;q=0.7",
         })
+
         try:
-            await page.goto(url, timeout=30_000, wait_until="load")
-            await page.wait_for_timeout(2000)
+            hide_browser_window()
+            await page.goto(url, timeout=20_000, wait_until="load")
+
+            if any(securedPage in url for securedPage in BotSecuredPages):
+                await human_delay()
+                await human_scroll(page)
+
+            # await page.wait_for_timeout(2000)
             extracted = await extract(page, url)
             if not extracted.get("title") and not extracted.get("description"):
                 body = await page.evaluate("() => document.body?.innerText || ''")
@@ -884,6 +962,52 @@ async def _async_scrape_url(url: str) -> dict:
         finally:
             await browser.close()
     return extracted
+
+def hide_browser_window():
+    system = platform.system()
+
+    try:
+        if system == "Linux":
+            # wymaga: sudo apt install xdotool
+            result = subprocess.check_output(
+                ["xdotool", "search", "--onlyvisible", "--class", "Chromium"]
+            )
+            window_ids = result.decode().split()
+
+            for wid in window_ids:
+                subprocess.call(["xdotool", "windowminimize", wid])
+                # lub:
+                # subprocess.call(["xdotool", "windowmove", wid, "-2000", "-2000"])
+
+        elif system == "Windows":
+            import win32gui
+            import win32con
+
+            def callback(hwnd, _):
+                title = win32gui.GetWindowText(hwnd)
+                if "Chrome" in title or "Chromium" in title:
+                    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+
+            win32gui.EnumWindows(callback, None)
+
+        elif system == "Darwin":  # macOS
+            # Wymaga instalacji i konfiguracji yabai -> README.md
+            result = subprocess.run(
+                ["yabai", "-m", "query", "--windows"],
+                capture_output=True,
+                text=True
+            )
+            windows = json.loads(result.stdout)
+
+            # Szukamy pierwszego okna aplikacji
+            for w in windows:
+                if w["has-focus"] == True:
+                    # minimalizacja
+                    subprocess.run(["yabai", "-m", "window", str(w["id"]), "--minimize"])
+                    return True
+
+    except Exception as e:
+        print(f"[WARN] Nie udało się ukryć okna: {e}")
 
 
 def _scrape_url(url: str) -> dict:
@@ -1093,24 +1217,29 @@ def view_search_by_url():
         st.warning("Nie udało się wyciągnąć danych ze strony.")
         return
 
-    spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie w Qdrant..."
-    with st.spinner(spinner_msg):
-        try:
-            results = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
-        except Exception as e:
-            st.error(f"Błąd wyszukiwania: {e}")
-            return
+    spinner_msg = "Wyszukiwanie + reranking..." if use_reranker else "Wyszukiwanie..."
+    _cache_key = f"_search_results_url_{url}_{top_k}_{use_reranker}"
+    if _cache_key not in st.session_state:
+        with st.spinner(spinner_msg):
+            try:
+                st.session_state[_cache_key] = _qdrant_search(query, top_k=top_k, rerank=use_reranker)
+            except Exception as e:
+                st.error(f"Błąd wyszukiwania: {e}")
+                return
+    results = st.session_state[_cache_key]
 
     if not results:
-        st.warning("Brak wyników.")
+        st.warning("Brak wyników. Sprawdź czy kolekcja Qdrant jest zwektoryzowana (`python vectorize.py`).")
         return
 
-    st.markdown(f"**{len(results)} pasujących indeksów**")
+    st.markdown(f"**{len(results)} wyników** dla: *{html_module.escape(url)}*")
     st.markdown("---")
 
     for i, r in enumerate(results, 1):
-        score_pct = min(int(r["score"] * 100), 100)
-        c1, c2 = st.columns([9, 2])
+        score_pct = max(0, min(int(r["score"] * 100), 100))
+        c0, c1, c2 = st.columns([1, 8, 2])
+        with c0:
+            st.checkbox("", key=f"sel_url_{r['indeks']}", label_visibility="collapsed")
         with c1:
             st.markdown(
                 f'<span style="color:#4cc9f0;font-weight:700;margin-right:8px">{i}.</span>'
@@ -1121,36 +1250,78 @@ def view_search_by_url():
                 unsafe_allow_html=True,
             )
         with c2:
-            st.progress(score_pct, text=f"score: {r['score']}")
+            st.progress(score_pct, text=f"score: {r['score']:.2f}")
         st.divider()
+
+    # ── Generowanie opisu przez LLM (Groq) ──
+    groq_cache_key = f"groq_desc_search_{query}"
+    with st.expander("✨ Generuj rozszerzony opis indeksu (Groq)", expanded=False):
+        col_llm1, col_llm2 = st.columns([3, 1])
+        with col_llm1:
+            groq_nazwa_s = st.text_input(
+                "Nazwa indeksu (opcjonalna, dla LLM)", value="", key="groq_nazwa_search"
+            )
+        with col_llm2:
+            groq_model_s = st.selectbox(
+                "Model Groq",
+                ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+                key="groq_model_search",
+            )
+        if st.button("✨ Generuj opis", key="groq_describe_search"):
+            from app.services.groq_client import generate_index_description
+            scraped_for_groq = {
+                "title": groq_nazwa_s,
+                "description": query,
+                "specifications": {},
+            }
+            with st.spinner("Generowanie opisu przez LLM..."):
+                desc_s = generate_index_description(
+                    scraped_for_groq,
+                    nazwa=groq_nazwa_s,
+                    model=groq_model_s,
+                )
+            st.session_state[groq_cache_key] = desc_s
+        if st.session_state.get(groq_cache_key):
+            desc_s = st.session_state[groq_cache_key]
+            if desc_s.startswith("BŁĄD:"):
+                st.error(desc_s)
+            else:
+                st.markdown("**Wygenerowany opis:**")
+                st.info(desc_s)
 
     sel_results = [r for r in results if st.session_state.get(f"sel_url_{r['indeks']}")]
     if sel_results:
-        if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_url"):
+        if st.button(f"💾 Zapisz zaznaczone ({len(sel_results)})", key="save_sel_search"):
             db = get_db()
+            groq_desc_s = st.session_state.get(groq_cache_key, "")
+            if groq_desc_s.startswith("BŁĄD:"):
+                groq_desc_s = ""
             if db:
                 for r in sel_results:
-                    db.collection("search_selections").add({
+                    doc = {
                         "query": query,
-                        "source": "url",
-                        "source_url": url,
-                        "qdrant_id": r.get("qdrant_id"),   # ← dodaj tę linię
+                        "source": "text",
+                        "qdrant_id": r.get("qdrant_id"),
                         "indeks": r["indeks"],
                         "nazwa": r["nazwa"],
                         "jdmr_nazwa": r.get("jdmr_nazwa", ""),
                         "score": float(r["score"]),
                         "saved_at": datetime.utcnow().isoformat(),
-                    })
+                    }
+                    if groq_desc_s:
+                        doc["groq_description"] = groq_desc_s
+                    db.collection("search_selections").add(doc)
                 st.success(f"Zapisano {len(sel_results)} indeks(ów) do Firestore (kolekcja: search_selections).")
                 try:
-                    _update_pomocniczy_vector(query, sel_results)
+                    pomocniczy_text = groq_desc_s if groq_desc_s else query
+                    _update_pomocniczy_vector(pomocniczy_text, sel_results)
                 except Exception as e:
                     st.warning(f"Zapis do Firestore OK, ale aktualizacja wektora pomocniczego nie powiodła się: {e}")
             else:
                 st.warning("Brak połączenia z Firestore.")
 
     st.markdown("---")
-    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="url_suggest_btn"):
+    if st.button("❌ Żadna odpowiedź nie jest prawidłowa — zaproponuj nowy indeks", key="suggest_btn"):
         st.session_state["url_suggest_mode"] = True
         st.session_state["url_suggest_query"] = query
         st.session_state["url_suggest_results"] = results
