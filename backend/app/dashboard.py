@@ -25,6 +25,9 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 from datetime import datetime, timedelta
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 # Apply nest_asyncio early to fix Windows asyncio subprocess issues
 try:
     import nest_asyncio
