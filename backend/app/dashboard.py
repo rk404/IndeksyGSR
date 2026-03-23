@@ -44,6 +44,7 @@ from app.core.search import search as _qdrant_search, get_model, get_reranker, n
 # ──────────────────────────────────────────────
 COLLECTION = "emails"
 PRODUCTS_COLLECTION = "product_scrapes"
+PRODUCTS_COLLECTION_BS = "product_scrapes_beautifulsoup"
 GCS_BUCKET_NAME = "projekt-email-attachments"
 
 st.set_page_config(
@@ -192,10 +193,11 @@ def load_emails() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
-def load_products() -> pd.DataFrame:
+def load_products(collection: str = PRODUCTS_COLLECTION) -> pd.DataFrame:
+    """Załaduj produkty z wybranej kolekcji (Playwright lub BeautifulSoup)."""
     db = get_db()
     rows = []
-    for doc in db.collection(PRODUCTS_COLLECTION).stream():
+    for doc in db.collection(collection).stream():
         d = doc.to_dict()
         rows.append({
             "indeks":         doc.id,
@@ -421,9 +423,121 @@ def product_detail(row: pd.Series):
 
 
 def view_products():
-    df = load_products()
+    """Zakładka do przeglądania wyników scrapingu produktów."""
+    
+    # ─── WYBÓR ŹRÓDŁA DANYCH ───
+    st.markdown("### 📊 Widok Produktów")
+    
+    data_source = st.radio(
+        "Źródło danych:",
+        ["🎭 Playwright", "⚡ BeautifulSoup", "📋 Porównanie"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="product_data_source"
+    )
+    
+    st.markdown("---")
+    # ─── NORMALNY WIDOK PRODUKTÓW ───
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔍 Filtry")
+    
+    # Załaduj dane z wybranego źródła
+    if data_source == "🎭 Playwright":
+        df = load_products(PRODUCTS_COLLECTION)
+        source_label = "🎭 Playwright"
+    elif data_source == "⚡ BeautifulSoup":
+        df = load_products(PRODUCTS_COLLECTION_BS)
+        source_label = "⚡ BeautifulSoup"
+    else:  # Porównanie
+        df_pw = load_products(PRODUCTS_COLLECTION)
+        df_bs = load_products(PRODUCTS_COLLECTION_BS)
+        
+        st.subheader("📊 Porównanie Metod Scrapingu")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🎭 Playwright", len(df_pw))
+        with col2:
+            st.metric("⚡ BeautifulSoup", len(df_bs))
+        with col3:
+            common = len(set(df_pw["indeks"]) & set(df_bs["indeks"]))
+            st.metric("🔗 Wspólne", common)
+        
+        st.markdown("---")
+        
+        # Tabs do porównania
+        tab_pw, tab_bs = st.tabs(["🎭 Playwright", "⚡ BeautifulSoup"])
+        
+        with tab_pw:
+            st.markdown(f"### {len(df_pw)} produktów (Playwright)")
+            
+            search_pw = st.sidebar.text_input("🔍 Szukaj (PW)", "", key="prod_search_pw")
+            only_specs_pw = st.sidebar.checkbox("Spec. (PW)", value=False, key="prod_specs_pw")
+            only_ok_pw = st.sidebar.checkbox("OK (PW)", value=True, key="prod_ok_pw")
+            
+            df_pw_f = df_pw.copy()
+            if only_ok_pw:
+                df_pw_f = df_pw_f[df_pw_f["status"] == "ok"]
+            if only_specs_pw:
+                df_pw_f = df_pw_f[df_pw_f["has_specs"]]
+            if search_pw:
+                mask = (
+                    df_pw_f["indeks"].str.contains(search_pw, case=False, na=False)
+                    | df_pw_f["nazwa"].str.contains(search_pw, case=False, na=False)
+                    | df_pw_f["title"].str.contains(search_pw, case=False, na=False)
+                )
+                df_pw_f = df_pw_f[mask]
+            
+            ok_count_pw = (df_pw["status"] == "ok").sum()
+            err_count_pw = (df_pw["status"] == "error").sum()
+            spec_count_pw = df_pw["has_specs"].sum()
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("📦 Produkty", len(df_pw_f), delta=f"z {len(df_pw)} łącznie" if len(df_pw_f) != len(df_pw) else None)
+            m2.metric("✅ Poprawnie", ok_count_pw)
+            m3.metric("❌ Błędy", err_count_pw)
+            m4.metric("⚙️ Ze spec.", spec_count_pw)
+            st.markdown("---")
+            
+            _product_list(df_pw_f)
+        
+        with tab_bs:
+            st.markdown(f"### {len(df_bs)} produktów (BeautifulSoup)")
+            
+            search_bs = st.sidebar.text_input("🔍 Szukaj (BS)", "", key="prod_search_bs")
+            only_specs_bs = st.sidebar.checkbox("Spec. (BS)", value=False, key="prod_specs_bs")
+            only_ok_bs = st.sidebar.checkbox("OK (BS)", value=True, key="prod_ok_bs")
+            
+            df_bs_f = df_bs.copy()
+            if only_ok_bs:
+                df_bs_f = df_bs_f[df_bs_f["status"] == "ok"]
+            if only_specs_bs:
+                df_bs_f = df_bs_f[df_bs_f["has_specs"]]
+            if search_bs:
+                mask = (
+                    df_bs_f["indeks"].str.contains(search_bs, case=False, na=False)
+                    | df_bs_f["nazwa"].str.contains(search_bs, case=False, na=False)
+                    | df_bs_f["title"].str.contains(search_bs, case=False, na=False)
+                )
+                df_bs_f = df_bs_f[mask]
+            
+            ok_count_bs = (df_bs["status"] == "ok").sum()
+            err_count_bs = (df_bs["status"] == "error").sum()
+            spec_count_bs = df_bs["has_specs"].sum()
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("📦 Produkty", len(df_bs_f), delta=f"z {len(df_bs)} łącznie" if len(df_bs_f) != len(df_bs) else None)
+            m2.metric("✅ Poprawnie", ok_count_bs)
+            m3.metric("❌ Błędy", err_count_bs)
+            m4.metric("⚙️ Ze spec.", spec_count_bs)
+            st.markdown("---")
+            
+            _product_list(df_bs_f)
+        
+        return
+    
     if df.empty:
-        st.warning("Brak danych scrapowanych. Uruchom najpierw `python scrape.py`.")
+        st.warning(f"Brak danych ({source_label}). Konfiguruj scraping w sekcji powyżej.")
         return
 
     # Filtry w sidebarze
