@@ -30,6 +30,7 @@ class EncodeRequest(BaseModel):
 class RerankRequest(BaseModel):
     query: str
     passages: list[str]
+    normalize: bool = True
 
 
 @app.post("/encode")
@@ -46,7 +47,7 @@ def encode(req: EncodeRequest):
 @app.post("/rerank")
 def rerank(req: RerankRequest):
     scores = _reranker.compute_score(
-        [(req.query, p) for p in req.passages], normalize=False
+        [(req.query, p) for p in req.passages], normalize=req.normalize
     )
     if hasattr(scores, "tolist"):
         scores = scores.tolist()

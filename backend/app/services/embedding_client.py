@@ -75,7 +75,7 @@ class EmbeddingReranker:
         passages = [p for _, p in pairs]
         resp = httpx.post(
             self._url,
-            json={"query": query, "passages": passages},
+            json={"query": query, "passages": passages, "normalize": normalize},
             timeout=_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
