@@ -929,21 +929,94 @@ _USER_AGENTS = [
     # "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     # "(KHTML, like Gecko) Version/17.3 Safari/605.1.15",
     # "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
-     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 ]
 
+def get_launch_args():
+    system = platform.system().lower()
+
+    base_args = [
+        "--enable-gpu",
+        "--disable-software-rasterizer",
+        "--disable-blink-features=AutomationControlled"
+    ]
+
+    if "windows" in system:
+        return base_args + ["--use-angle=d3d11"]
+
+    elif "darwin" in system:  # macOS
+        return base_args + ["--use-angle=metal"]
+
+    elif "linux" in system:
+        return base_args + ["--use-gl=desktop"]
+
+    else:
+        return base_args  # fallback
 
 async def _async_scrape_url(url: str) -> dict:
     from playwright.async_api import async_playwright, TimeoutError as PWTimeout  # noqa: PLC0415
     from app.core.extractors import extract  # noqa: PLC0415
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        ctx = await browser.new_context(viewport=ViewportSize({"width": 1400, "height": 900}), locale="pl-PL")
+        args = get_launch_args()
+        browser = await pw.chromium.launch(headless=False, args=args)
+        # ctx = await browser.new_context(viewport=ViewportSize({"width": 1400, "height": 900}), locale="pl-PL")
+
+        # Comment for persistent context
+        ctx = await browser.new_context(viewport=ViewportSize({"width": 1920, "height": 1080}))
+
+        # Uncomment for persistent context
+        # ctx = await pw.chromium.launch_persistent_context(
+        #     user_data_dir="./real-profile",
+        #     headless=False,
+        #     channel="chrome",
+        # )
+
+
+        await ctx.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => false
+        });
+
+        const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+
+        HTMLCanvasElement.prototype.toDataURL = function(...args) {
+            const ctx = this.getContext("2d");
+
+            // minimalny szum
+            if (ctx) {
+                const shift = {
+                    r: Math.floor(Math.random() * 10),
+                    g: Math.floor(Math.random() * 10),
+                    b: Math.floor(Math.random() * 10),
+                    a: Math.floor(Math.random() * 10)
+                };
+
+                const width = this.width;
+                const height = this.height;
+
+                if (width && height) {
+                    const imageData = ctx.getImageData(0, 0, width, height);
+
+                    for (let i = 0; i < imageData.data.length; i += 4) {
+                        imageData.data[i + 0] += shift.r;
+                        imageData.data[i + 1] += shift.g;
+                        imageData.data[i + 2] += shift.b;
+                        imageData.data[i + 3] += shift.a;
+                    }
+
+                    ctx.putImageData(imageData, 0, 0);
+                }
+            }
+
+            return toDataURL.apply(this, args);
+        };
+        """)
         page = await ctx.new_page()
 
         await page.set_extra_http_headers({
             "User-Agent": random.choice(_USER_AGENTS),
+            "Sec-CH-UA": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
             # "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
             "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8,pl;q=0.7",
         })
@@ -963,6 +1036,7 @@ async def _async_scrape_url(url: str) -> dict:
                 extracted["description"] = body[:3000].strip()
                 extracted["title"] = (await page.title()) or ""
         finally:
+            # await page.close()
             await browser.close()
     return extracted
 
