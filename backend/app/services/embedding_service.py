@@ -18,8 +18,8 @@ from FlagEmbedding import BGEM3FlagModel, FlagReranker
 
 app = FastAPI(title="Embedding Service")
 
-_model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
-_reranker = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=True)
+_model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=False, device="cpu")
+_reranker = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=False, device="cpu")
 
 
 class EncodeRequest(BaseModel):

@@ -23,6 +23,7 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "pl-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl",
     "pandas-stubs~=2.3.3",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
