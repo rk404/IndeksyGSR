@@ -6,7 +6,9 @@ Uruchomienie:
 """
 
 import asyncio
+import hashlib
 import html as html_module
+import io
 import os
 import random
 import sys
@@ -1411,6 +1413,101 @@ def view_search_by_url():
 
 
 # ──────────────────────────────────────────────
+# Wyszukiwanie masowe z pliku Excel
+# ──────────────────────────────────────────────
+
+def view_bulk_search():
+    st.markdown("## 📋 Wyszukiwanie masowe indeksów")
+
+    qdrant = _get_qdrant()
+    if qdrant is None:
+        st.error("Brak konfiguracji Qdrant. Dodaj `QDRANT_URL` i `QDRANT_API_KEY` do pliku `.env`.")
+        return
+
+    if "search_model_ready" not in st.session_state:
+        with st.spinner("Ładowanie modelu BGE-M3 (pierwsze uruchomienie, ~30s)..."):
+            get_search_model()
+        st.session_state["search_model_ready"] = True
+
+    st.info(
+        "Wgraj plik Excel (.xlsx) z jedną kolumną **`opis_materialu`**. "
+        "Dla każdego opisu zostanie przypisany najlepszy indeks z bazy."
+    )
+
+    uploaded_file = st.file_uploader("Wybierz plik Excel", type=["xlsx"])
+    use_reranker = st.checkbox("Cross-encoder reranking (wolniejsze)", value=False)
+
+    if uploaded_file is None:
+        return
+
+    file_bytes = uploaded_file.read()
+    file_hash = hashlib.md5(file_bytes).hexdigest()
+    cache_key = f"_bulk_search_results_{file_hash}_{use_reranker}"
+
+    try:
+        df_input = pd.read_excel(io.BytesIO(file_bytes))
+    except Exception as e:
+        st.error(f"Błąd odczytu pliku Excel: {e}")
+        return
+
+    if "opis_materialu" not in df_input.columns:
+        st.error(f"Plik musi zawierać kolumnę `opis_materialu`. Znalezione kolumny: {list(df_input.columns)}")
+        return
+
+    descriptions = df_input["opis_materialu"].astype(str).tolist()
+    st.markdown(f"Załadowano **{len(descriptions)}** opisów.")
+
+    if cache_key not in st.session_state:
+        if not st.button("🔍 Wyszukaj indeksy"):
+            return
+
+        spinner_msg = "Wyszukiwanie z rerankingiem..." if use_reranker else "Wyszukiwanie..."
+        results_rows = []
+        progress_bar = st.progress(0, text=spinner_msg)
+        status_text = st.empty()
+
+        for i, desc in enumerate(descriptions):
+            status_text.text(f"Przetwarzanie {i + 1}/{len(descriptions)}: {desc[:60]}...")
+            try:
+                hits = _qdrant_search(desc, top_k=1, rerank=use_reranker)
+                if hits:
+                    results_rows.append({
+                        "opis_materialu": desc,
+                        "indeks": hits[0]["indeks"],
+                        "nazwa": hits[0]["nazwa"],
+                        "score": round(float(hits[0]["score"]), 4),
+                    })
+                else:
+                    results_rows.append({"opis_materialu": desc, "indeks": "", "nazwa": "", "score": 0.0})
+            except Exception as e:
+                results_rows.append({"opis_materialu": desc, "indeks": "BŁĄD", "nazwa": str(e), "score": 0.0})
+            progress_bar.progress((i + 1) / len(descriptions), text=spinner_msg)
+
+        status_text.empty()
+        st.session_state[cache_key] = results_rows
+
+    if cache_key not in st.session_state:
+        return
+
+    results_rows = st.session_state[cache_key]
+    df_result = pd.DataFrame(results_rows, columns=["opis_materialu", "indeks", "nazwa", "score"])
+
+    st.markdown(f"### Wyniki ({len(df_result)} wierszy)")
+    st.dataframe(df_result, use_container_width=True)
+
+    output_buffer = io.BytesIO()
+    df_result.to_excel(output_buffer, index=False, engine="openpyxl")
+    output_buffer.seek(0)
+
+    st.download_button(
+        label="⬇️ Pobierz wyniki (.xlsx)",
+        data=output_buffer,
+        file_name="wyniki_indeksow.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+# ──────────────────────────────────────────────
 # Główna aplikacja
 # ──────────────────────────────────────────────
 
@@ -1419,7 +1516,7 @@ def main():
     st.sidebar.title("IndeksyGSR")
     view = st.sidebar.radio(
         "Widok",
-        ["📧 Maile", "📦 Produkty (scraping)", "🔍 Wyszukiwanie", "🌐 Po URL sklepu", "📝 Propozycje indeksów"],
+        ["📧 Maile", "📦 Produkty (scraping)", "🔍 Wyszukiwanie", "🌐 Po URL sklepu", "📝 Propozycje indeksów", "📋 Wyszukiwanie masowe"],
         label_visibility="collapsed",
     )
 
@@ -1439,8 +1536,10 @@ def main():
         view_search()
     elif view == "🌐 Po URL sklepu":
         view_search_by_url()
-    else:
+    elif view == "📝 Propozycje indeksów":
         view_proposed_indexes()
+    else:
+        view_bulk_search()
 
 
 if __name__ == "__main__":
