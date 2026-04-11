@@ -1516,7 +1516,7 @@ def main():
     st.sidebar.title("IndeksyGSR")
     view = st.sidebar.radio(
         "Widok",
-        ["📧 Maile", "📦 Produkty (scraping)", "🔍 Wyszukiwanie", "🌐 Po URL sklepu", "📝 Propozycje indeksów", "📋 Wyszukiwanie masowe"],
+        ["📦 Produkty (scraping)", "🔍 Wyszukiwanie", "🌐 Po URL sklepu", "📝 Propozycje indeksów", "📋 Wyszukiwanie masowe"],
         label_visibility="collapsed",
     )
 
@@ -1528,9 +1528,7 @@ def main():
                 del st.session_state[key]
         st.rerun()
 
-    if view == "📧 Maile":
-        view_emails()
-    elif view == "📦 Produkty (scraping)":
+    if view == "📦 Produkty (scraping)":
         view_products()
     elif view == "🔍 Wyszukiwanie":
         view_search()
