@@ -14,8 +14,14 @@ Użycie CLI:
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from functools import lru_cache
+
+
+def _sigmoid(x: float, temperature: float = 2.5) -> float:
+    """Sigmoid ze skalowaniem temperatury — zapobiega nasyceniu dla dużych logitów."""
+    return 1.0 / (1.0 + math.exp(-x / temperature))
 
 from qdrant_client import QdrantClient, models
 from app.services.embedding_client import EmbeddingModel, EmbeddingReranker
@@ -217,13 +223,18 @@ def search(
             (query, _build_rerank_text(c, scrape_map))
             for c in candidates
         ]
-        scores = reranker.compute_score(pairs)
+        scores = reranker.compute_score(pairs, normalize=False)  # surowe logity
         if hasattr(scores, "tolist"):
             scores = scores.tolist()
         for c, s in zip(candidates, scores):
-            c["score"] = round(float(s), 4)
+            c["score"] = float(s)
         candidates.sort(key=lambda x: x["score"], reverse=True)
         candidates = candidates[:top_k]
+
+        # Temperature-scaled sigmoid — absolutny score, nie relative ranking.
+        # T=2.5: logit=8→94%, logit=5→87%, logit=2→69%, logit=0→50%, logit=-3→30%
+        for c in candidates:
+            c["score"] = round(_sigmoid(c["score"]), 4)
 
     return candidates
 

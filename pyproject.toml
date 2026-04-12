@@ -24,6 +24,7 @@ dependencies = [
     "pl-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl",
     "pandas-stubs~=2.3.3",
     "openpyxl>=3.1",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -45,3 +46,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["backend"]
 include = ["app*"]
+
+[dependency-groups]
+dev = [
+    "python-pptx>=1.0.2",
+]
