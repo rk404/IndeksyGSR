@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/* Solarized Light palette */
+@theme {
+  --color-sol-base03: #002b36;
+  --color-sol-base02: #073642;
+  --color-sol-base01: #586e75;
+  --color-sol-base00: #657b83;
+  --color-sol-base0: #839496;
+  --color-sol-base1: #93a1a1;
+  --color-sol-base2: #eee8d5;
+  --color-sol-base3: #fdf6e3;
+  --color-sol-yellow: #b58900;
+  --color-sol-orange: #cb4b16;
+  --color-sol-red: #dc322f;
+  --color-sol-magenta: #d33682;
+  --color-sol-violet: #6c71c4;
+  --color-sol-blue: #268bd2;
+  --color-sol-cyan: #2aa198;
+  --color-sol-green: #859900;
+}
+
+/* Solarized Dark — swap base roles */
+.dark {
+  --color-sol-base3:  #002b36;
+  --color-sol-base2:  #073642;
+  --color-sol-base1:  #586e75;
+  --color-sol-base0:  #657b83;
+  --color-sol-base00: #839496;
+  --color-sol-base01: #93a1a1;
+  --color-sol-base02: #eee8d5;
+  --color-sol-base03: #fdf6e3;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-sol-base3);
+  color: var(--color-sol-base00);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--color-sol-base2); }
+::-webkit-scrollbar-thumb { background: var(--color-sol-base1); border-radius: 4px; }
