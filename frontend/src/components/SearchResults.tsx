@@ -7,9 +7,10 @@ interface Props {
   selected: Set<string>;
   onToggle: (indeks: string) => void;
   query: string;
+  onDescriptionChange?: (indeks: string, description: string) => void;
 }
 
-export default function SearchResults({ results, selected, onToggle, query }: Props) {
+export default function SearchResults({ results, selected, onToggle, query, onDescriptionChange }: Props) {
   if (results.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -40,7 +41,11 @@ export default function SearchResults({ results, selected, onToggle, query }: Pr
             onToggle={() => onToggle(r.indeks)}
           />
           {selected.has(r.indeks) && (
-            <DescGenPanel result={r} query={query} />
+            <DescGenPanel
+              result={r}
+              query={query}
+              onDescriptionGenerated={(desc) => onDescriptionChange?.(r.indeks, desc)}
+            />
           )}
         </div>
       ))}

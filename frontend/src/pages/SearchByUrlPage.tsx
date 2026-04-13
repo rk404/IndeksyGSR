@@ -10,6 +10,7 @@ export default function SearchByUrlPage() {
   const [topK, setTopK] = useState(10);
   const [rerank, setRerank] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [descriptions, setDescriptions] = useState<Record<string, string>>({});
   const [showPropose, setShowPropose] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
 
@@ -20,6 +21,7 @@ export default function SearchByUrlPage() {
     if (!url.trim()) return;
     search.mutate({ url, top_k: topK, rerank });
     setSelected(new Set());
+    setDescriptions({});
     setShowPropose(false);
   };
 
@@ -41,7 +43,7 @@ export default function SearchByUrlPage() {
       query: search.data.query,
       source: 'url',
       results: selectedResults,
-      groq_description: '',
+      groq_descriptions: descriptions,
     });
   };
 
@@ -136,6 +138,9 @@ export default function SearchByUrlPage() {
             selected={selected}
             onToggle={toggleSelection}
             query={search.data.query}
+            onDescriptionChange={(indeks, desc) =>
+              setDescriptions((prev) => ({ ...prev, [indeks]: desc }))
+            }
           />
 
           {selectedResults.length > 0 && (

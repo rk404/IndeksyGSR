@@ -54,7 +54,7 @@ class SaveSelectionRequest(BaseModel):
     query: str
     source: str = "text"
     results: list[SearchResult]
-    groq_description: str = ""
+    groq_descriptions: dict[str, str] = {}
 
 
 # ── Generate description (Groq) ──

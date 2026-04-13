@@ -26,7 +26,7 @@ export function useSaveSelection() {
       query: string;
       source: string;
       results: { qdrant_id: number | string | null; indeks: string; nazwa: string; jdmr_nazwa: string; score: number }[];
-      groq_description: string;
+      groq_descriptions: Record<string, string>;
     }) => {
       const { data } = await api.post('/search/save', params);
       return data;

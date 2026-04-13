@@ -81,8 +81,9 @@ def api_save_selection(req: SaveSelectionRequest):
             "score": float(r.score),
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
-        if req.groq_description:
-            doc["groq_description"] = req.groq_description
+        desc = req.groq_descriptions.get(r.indeks, "")
+        if desc:
+            doc["groq_description"] = desc
         db.collection("search_selections").add(doc)
 
     # Update pomocniczy vector
@@ -91,7 +92,8 @@ def api_save_selection(req: SaveSelectionRequest):
         from qdrant_client import models as qmodels
 
         model = get_model()
-        text = req.groq_description if req.groq_description else req.query
+        # Use first available description, fall back to query
+        text = next((d for d in req.groq_descriptions.values() if d), req.query)
         output = model.encode(
             [text], return_dense=True, return_sparse=False, return_colbert_vecs=False,
         )
